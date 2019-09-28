@@ -12,7 +12,9 @@ castclient.lua is a lua script and can be run as 'lua castclient.lua', or you ca
 
 castclient.lua comes with an initial feeds.lst file that can be copied to ~/.castclient/feeds.lst. Alternatively you can add feeds by pressing the 'a' key and entering the URLs when prompted. Pressing the '?' key will display a list of keystrokes that are used.
 
+For bitchute channels you have to enter the url to the channel (usually https://www.bitchute.com/channels/<chan name>/) and castclient.lua will find the RSS feed for the channel.
+
 LICENSE
 =======
 
-castcleint.lua is released under the GPLv3 and is copyright Colum Paget 2019
+castclient.lua is released under the GPLv3 and is copyright Colum Paget 2019
