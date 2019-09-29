@@ -159,7 +159,7 @@ function SelectPlayer(media_url)
 local player, extn, dev, args, str, pos
 
 pos=string.find(media_url, "?")
-if pos > 0 then str=string.sub(media_url, 1, pos-1) 
+if pos ~= nil then str=string.sub(media_url, 1, pos-1) 
 else str=media_url
 end
 
