@@ -147,6 +147,7 @@ local i,player
 
 for i,player in ipairs(players)
 do
+io.stderr:write("select: ["..extn.."] ["..player.extn.."]\n")
 	if player.extn==extn then return player end
 end
 
@@ -155,17 +156,20 @@ end
 
 
 function SelectPlayer(media_url)
-local player, extn, dev, args
+local player, extn, dev, args, str, pos
 
---using args here just to hold a string
-args=filesys.basename(media_url)
-extn=filesys.extn(args)
+pos=string.find(media_url, "?")
+if pos > 0 then str=string.sub(media_url, 1, pos-1) 
+else str=media_url
+end
+
+str=filesys.basename(str)
+extn=filesys.extn(str)
 
 
 if strutil.strlen(extn) > 1 then player=SelectPlayerGetFirstMatch(string.sub(extn, 2)) end
 if player==nil then player=SelectPlayerGetFirstMatch("*") end
 
---now args actually means arguments to player command
 args=player.args
 dev=settings["dev:" .. filesys.basename(player.path)]
 if dev ~= nil then args=string.gsub(args, "%(dev%)", dev.value) end
@@ -956,7 +960,7 @@ function FeedItemsScreenUpdate(Screen)
 local str, item
 
 Out:move(0, 0)
-str=string.format("~B   ~e%s~0~B  %d items~>~0\n", curr_chan.title, #Screen.items)
+str=string.format("~B~y   ~e%s~0~B~w  %d items~>~0\n", curr_chan.title, #Screen.items)
 Out:puts(str);
 
 str=Screen.menu:curr()
