@@ -147,7 +147,6 @@ local i,player
 
 for i,player in ipairs(players)
 do
-io.stderr:write("select: ["..extn.."] ["..player.extn.."]\n")
 	if player.extn==extn then return player end
 end
 
@@ -1158,14 +1157,9 @@ return str
 end
 
 
+function PlaylistFormatEntry(item)
+local str
 
-function PlaylistScreenUpdate(Screen)
-local item
-
-Screen.menu:clear()
-
-for i,item in ipairs(Screen.items)
-do
 	if player_pid > 0 and player_pid==item.pid 
 	then 
 		str="~w~eplaying~0      "..item.url 
@@ -1178,8 +1172,16 @@ do
 	else
 		str="queued       "..item.url 
 	end
+return str
+end
 
-	Screen.menu:add(str, item.url)
+
+function PlaylistScreenUpdate(Screen)
+local i, item
+
+for i,item in ipairs(Screen.items)
+do
+	Screen.menu:update(PlaylistFormatEntry(item), item.url)
 end
 
 
@@ -1188,6 +1190,7 @@ end
 
 function SetupPlaylistScreen()
 local Screen={}
+local i, item
 
 Screen.menu=terminal.TERMMENU(Out, 2, 3, Out:width()-4, Out:length() - 10)
 Screen.items=downloads
@@ -1197,7 +1200,10 @@ Screen.draw=PlaylistScreenDraw
 Screen.on_select=PlaylistOnSelect
 Screen.on_key=PlaylistOnKey
 
-Screen:update()
+for i,item in ipairs(Screen.items)
+do
+	Screen.menu:add(PlaylistFormatEntry(item), item.url)
+end
 
 return Screen
 
