@@ -556,6 +556,8 @@ if FeedsS ~= nil
 then
 	FeedsS:waitlock()
 	NewFeedsS=stream.STREAM(casts_dir.."/feeds.new", "rw")
+	if NewFeedsS ~= nil
+	then
 	NewFeedsS:waitlock()
 
 	str=NewFeedsS:readln()
@@ -570,6 +572,7 @@ then
 
 	NewFeedsS:truncate()
 	NewFeedsS:close()
+	end
 	FeedsS:close()
 end
 end
