@@ -361,7 +361,7 @@ then
 	str=S:readln()
 	while str ~= nil
 	do
-	table.insert(feeds, FeedsParseItem(str))
+	if strutil.strlen(str) > 0 then table.insert(feeds, FeedsParseItem(str)) end
 	str=S:readln()
 	end
 	S:close()
@@ -585,6 +585,8 @@ local i, feed, chan, items
 
 	for i,feed in ipairs(feed_list)
 	do
+		if strutil.strlen(feed.url) > 0
+		then
 		chan,items=FeedGet(feed.url)
 		if chan ~= nil
 		then
@@ -592,6 +594,7 @@ local i, feed, chan, items
 		feed.description=chan.description
 		feed.updated=chan.updated
 		feed.size=#items
+		end
 		end
 	end
 
@@ -1569,6 +1572,7 @@ if cmd=="add"
 then 
 	FeedsAdd(url) 
 else
+	process.lu_set("Error:Silent","y")
 	if strutil.strlen(settings.proxy.value) then net.setProxy(settings.proxy.value) end
 
 	FeedsUpdate()
