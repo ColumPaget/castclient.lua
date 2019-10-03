@@ -445,6 +445,8 @@ str=S:readdoc()
 P=dataparser.PARSER("rss", str)
 S:close()
 
+if P ~= nil
+then
 I=P:next()
 while I ~= nil
 do
@@ -475,6 +477,7 @@ do
 		table.insert(items, item)
 	end
 	I=P:next()
+end
 end
 end
 
@@ -1165,15 +1168,15 @@ local str
 
 	if player_pid > 0 and player_pid==item.pid 
 	then 
-		str="~w~eplaying~0      "..item.url 
+		str="~w~eplaying~0      "..item.title 
 	elseif downloader_pid > 0 and downloader_pid==item.pid
 	then
-		str="~rdownloading~0  "..item.url 
+		str="~rdownloading~0  "..item.title 
 	elseif item.downloaded==true
 	then
-		str="~yready~0        "..item.url 
+		str="~yready~0        "..item.title 
 	else
-		str="queued       "..item.url 
+		str="queued       "..item.title 
 	end
 return str
 end
@@ -1185,6 +1188,13 @@ local i, item
 for i,item in ipairs(Screen.items)
 do
 	Screen.menu:update(PlaylistFormatEntry(item), item.url)
+end
+
+str=Screen.menu:curr()
+if str ~=nil
+then
+	item=FindItemByURL(Screen.items, str)
+	if item ~= nil then TextArea(Out:length() -5, 3, item.description) end
 end
 
 
