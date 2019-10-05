@@ -155,7 +155,7 @@ end
 
 
 function SelectPlayer(media_url)
-local player, extn, dev, args, str, pos
+local player, extn, args, str, pos, toks, ao_type, ao_id
 
 pos=string.find(media_url, "?")
 if pos ~= nil then str=string.sub(media_url, 1, pos-1) 
@@ -170,8 +170,19 @@ if strutil.strlen(extn) > 1 then player=SelectPlayerGetFirstMatch(string.sub(ext
 if player==nil then player=SelectPlayerGetFirstMatch("*") end
 
 args=player.args
+dev=settings["out:" .. filesys.basename(player.path)]
+if dev ~= nil then args=string.gsub(args, "%(out%)", dev.value) end
+
 dev=settings["dev:" .. filesys.basename(player.path)]
-if dev ~= nil then args=string.gsub(args, "%(dev%)", dev.value) end
+if dev ~= nil 
+then
+toks=strutil.TOKENIZER(dev.value, ":")
+ao_type=toks:next()
+ao_id=toks:next()
+args=string.gsub(args, "%(dev%)", dev.value) 
+args=string.gsub(args, "%(ao_type%)", ao_type) 
+args=string.gsub(args, "%(ao_id%)", ao_id) 
+end
 
 return player.path.." "..args
 end
@@ -830,7 +841,6 @@ end
 function StatusBarDisplay()
 local str, item
 
-Out:move(0, Out:length()-1)
 
 str="~C"
 str=str..string.format("Playlist: % 4d items     ", #downloads)
@@ -849,6 +859,9 @@ else
 end
 
 str=str.."~>~0"
+
+if string.len(str) > Out:width() then str=string.sub(str, 1, Out:width()-1) end
+Out:move(0, Out:length()-1)
 Out:puts(str)
 end
 
@@ -1150,7 +1163,7 @@ local url, str, item, i
 
 
 str=""
-if key=="C"
+if key=="c"
 then
 	downloads={}
 else
@@ -1393,9 +1406,10 @@ function SettingsMenuSortCompare(i1, i2)
 if i1.name=="players" then return true end
 if i2.name=="players" then return false end
 
- if string.sub(i1.name, 1, 4) == "dev:" and string.sub(i2.name, 1, 4) ~= "dev:" then return true end
+if string.sub(i1.name, 1, 4) == "dev:" and string.sub(i2.name, 1, 4) ~= "dev:" then return true end
+if string.sub(i1.name, 1, 4) ~= "dev:" and string.sub(i2.name, 1, 4) == "dev:" then return false end
 
-return false
+return i1.name < i2.name 
 end
 
 
@@ -1539,9 +1553,10 @@ end
 
 function ApplicationInit()
 
-SettingCreate("players", "mp3:'mpg123 -a (dev)';ogg:ogg123;*:'cxine -ao (dev) +ss';*:'mplayer -ao (dev)'", "Players", "List of media players to search for and use.")
+SettingCreate("players", "mp3:'mpg123 -o (ao_type) -a (ao_id)';mp3:'mpg321 -o (ao_type) -a (ao_id)';mp3:madplay:ogg:ogg123;*:'cxine -ao (dev) +ss';*:'mplayer -ao (dev)'", "Players", "List of media players to search for and use.")
 
-SettingCreate("dev:mpg123", "/dev/dsp", "mpg123 output device", "Audio output device for mpg123. This will be /dev/dsp, /dev/dsp1 for oss, or hw:0, hw:1 for alsa.")
+SettingCreate("dev:mpg123", "oss:/dev/dsp", "mpg123 output device", "Audio output device for mpg123. This will be /dev/dsp, /dev/dsp1 for oss, or hw:0, hw:1 for alsa.")
+SettingCreate("dev:mpg321", "oss:/dev/dsp", "mpg321 output device", "Audio output device for mpg321. This will be /dev/dsp, /dev/dsp1 for oss, or hw:0, hw:1 for alsa.")
 SettingCreate("dev:mplayer", "alsa:hw:1,alsa:hw:0,oss:/:dev/:dsp1,oss:/dev/dsp", "mplayer output device", "Audio output device for mplayer. Mplayer can accept a list of devices and use the first one that works. Format is <dev type>:<dev name>. e.g. oss:/dev/dsp or alsa:hw:1")
 SettingCreate("dev:cxine", "alsa:0,alsa:1", "cxine output device", "Audio output device for cxine. CXine can accept a list of devices and use the first one that works. Format is <dev type>:<dev number>. e.g. oss:0 or alsa:1")
 SettingCreate("stop_play_on_exit", true, "Stop playing on exit", "Kill off player app, stopping playback, if user exits castclient.")
@@ -1594,7 +1609,7 @@ else
 
 	MainScreen()
 
-	if player_pid > 0 and settings.stop_play_on_exit == true then process.kill(player_pid) end
+	if player_pid > 0 and settings.stop_play_on_exit.value == true then process.kill(player_pid) end
 
 	Out:move(0,0)
 	Out:clear()
