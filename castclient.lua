@@ -858,9 +858,11 @@ else
 	str=str.."~nidle"
 end
 
-str=str.."~>~0"
 
 if string.len(str) > Out:width() then str=string.sub(str, 1, Out:width()-1) end
+
+str=str.."~>~0"
+
 Out:move(0, Out:length()-1)
 Out:puts(str)
 end
