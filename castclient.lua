@@ -180,8 +180,8 @@ toks=strutil.TOKENIZER(dev.value, ":")
 ao_type=toks:next()
 ao_id=toks:next()
 args=string.gsub(args, "%(dev%)", dev.value) 
-args=string.gsub(args, "%(ao_type%)", ao_type) 
-args=string.gsub(args, "%(ao_id%)", ao_id) 
+if ao_type ~= nil then args=string.gsub(args, "%(ao_type%)", ao_type) end
+if ao_id ~= nil then args=string.gsub(args, "%(ao_id%)", ao_id) end
 end
 
 return player.path.." "..args
