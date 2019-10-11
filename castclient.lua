@@ -32,6 +32,7 @@ screen_reload_needed=true
 downloads={}
 downloader_pid=0
 player_pid=0
+player=nil
 now_playing=""
 curr_chan=""
 
@@ -118,27 +119,27 @@ end
 
 
 function PlaybackPause()
+if player_pid > 0
+then
 	if player_state==player_state_play
 	then
 		player_state=player_state_pause
-		process.kill(player_pid, 19)
+		player:pause()
 	elseif player_state==player_state_pause
 	then
 		player_state=player_state_play
-		process.kill(player_pid, 18)
+		player:continue()
 	end
 end
-
+end
 
 function PlaybackStop()
 if player_pid > 0
 then
 		player_state=state_stopped
-		process.kill(player_pid, 15)
+		player:continue()
 		process.usleep(10000)
-		process.kill(player_pid, 19)
-		process.usleep(10000)
-		process.kill(player_pid, 9)
+		player:stop()
 end
 end
 
@@ -156,7 +157,7 @@ end
 
 
 function SelectPlayer(media_url)
-local player, extn, args, str, pos, toks, ao_type, ao_id
+local player, extn, str, pos,  
 
 pos=string.find(media_url, "?")
 if pos ~= nil then str=string.sub(media_url, 1, pos-1) 
@@ -170,17 +171,37 @@ extn=filesys.extn(str)
 if strutil.strlen(extn) > 1 then player=SelectPlayerGetFirstMatch(string.sub(extn, 2)) end
 if player==nil then player=SelectPlayerGetFirstMatch("*") end
 
-args=player.args
-dev=settings["out:" .. filesys.basename(player.path)]
-if dev ~= nil then args=string.gsub(args, "%(out%)", dev.value) end
+return player
+end
 
-dev=settings["dev:" .. filesys.basename(player.path)]
-if dev ~= nil 
+
+function LookupPlayerSetting(player_path, key)
+local str, setting
+
+str=key..":"..filesys.basename(player_path)
+setting=settings[str]
+if setting==nil then return nil end
+
+return setting.value 
+end
+
+
+function SetupPlayerCommand(player)
+local args, dev, toks, ao_type, ao_id
+
+args=player.args
+
+str=LookupPlayerSetting(player.path, "out")
+if str ~= nil then args=string.gsub(args, "%(out%)", str) end
+
+str=LookupPlayerSetting(player.path, "dev")
+if str ~= nil 
 then
-toks=strutil.TOKENIZER(dev.value, ":")
+toks=strutil.TOKENIZER(str, ":")
 ao_type=toks:next()
 ao_id=toks:next()
-args=string.gsub(args, "%(dev%)", dev.value) 
+
+args=string.gsub(args, "%(dev%)", str) 
 if ao_type ~= nil then args=string.gsub(args, "%(ao_type%)", ao_type) end
 if ao_id ~= nil then args=string.gsub(args, "%(ao_id%)", ao_id) end
 end
@@ -190,16 +211,19 @@ end
 
 
 function PlayItem(item)
-local str, player, file, extn
+local cmd, player_info
 
-if player_pid > 0 then process.kill(player_pid) end
+if player_pid > 0 then player:stop() end
 
-str=SelectPlayer(item.url) .. " "..  CachePath(item.url)
+player_info=SelectPlayer(item.url) 
+cmd=SetupPlayerCommand(player_info) .. " "..  CachePath(item.url)
 
-player_pid=process.spawn(str, "noshell innull outnull")
-if player_pid > 0 
+player=process.PROCESS(cmd, "noshell pty outnull")
+if player ~= nil
 then 
+	player_pid=player:pid()	
 	player_state=player_state_play
+
 	now_playing=item.title
 	item.pid=player_pid
 	item.played=true
@@ -254,6 +278,30 @@ end
 
 screen_reload_needed=true
 end
+
+
+function PlaybackRewind()
+local cmd
+
+if player_pid > 0 
+then 
+	cmd=LookupPlayerSetting(player:exec_path(), "rewind")
+	if cmd ~= nil then player:send(cmd) end
+end
+
+end
+
+function PlaybackForward()
+local cmd
+
+if player_pid > 0 
+then 	
+	cmd=LookupPlayerSetting(player:exec_path(), "forward")
+	if cmd ~= nil then player:send(cmd) end
+end
+
+end
+
 
 
 
@@ -757,6 +805,7 @@ then
 	if pid==player_pid 
 	then 
 		player_pid=0 
+		player_state=player_state_idle
 		now_playing=""
 		StatusBarDisplay()
 	end
@@ -956,11 +1005,15 @@ do
 	elseif ch=="CTRL_LEFT"
 	then
 		PlaybackPrev()
-		break
 	elseif ch=="CTRL_RIGHT"
 	then
 		PlaybackNext()
-		break
+	elseif ch=="SHIFT_LEFT"
+	then
+		PlaybackRewind()
+	elseif ch=="SHIFT_RIGHT"
+	then
+		PlaybackForward()
 	else
 		if strutil.strlen(ch) > 0
 		then
@@ -1248,7 +1301,7 @@ end
 
 
 
-function SettingCreate(name, value, title, desc)
+function SettingCreate(name, value, title, desc, hide)
 local item={}
 local toks, token, seconds, str
 
@@ -1260,6 +1313,7 @@ then
 	item.value=value
 	item.title=title
 	item.description=desc
+	item.hide=hide
 	settings[name]=item
 else
 	item=settings[name]
@@ -1378,7 +1432,7 @@ then
 		name=toks:next()
 		value=toks:remaining()
 
-		SettingCreate(name, value, "", "")
+		SettingCreate(name, value, "", "", false)
 		str=S:readln()
 	end
 
@@ -1457,7 +1511,7 @@ table.sort(sorted, SettingsMenuSortCompare)
 
 for key,item in pairs(sorted)
 do
-	Screen.menu:add(string.format("%- 30s %s", item.title, item.value),  item.name.."=".. tostring(item.value))
+	if item.hide ~= true then Screen.menu:add(string.format("%- 30s %s", item.title, item.value),  item.name.."=".. tostring(item.value)) end
 end
 
 Screen.on_select=SettingsOnSelect
@@ -1563,24 +1617,22 @@ end
 
 function ApplicationInit()
 
-SettingCreate("players", "mp3:'mpg123 -o (ao_type) -a (ao_id)';mp3:'mpg321 -o (ao_type) -a (ao_id)';mp3:madplay:ogg:ogg123;*:'cxine -ao (dev) +ss';*:'mplayer -ao (dev)'", "Players", "List of media players to search for and use.")
+SettingCreate("players", "mp3:'mpg123 -C -o (ao_type) -a (ao_id)';mp3:'mpg321 -o (ao_type) -a (ao_id)';mp3:madplay:ogg:ogg123;*:'cxine -ao (dev) +ss';*:'mplayer -ao (dev)'", "Players", "List of media players to search for and use.", false)
 
-SettingCreate("dev:mpg123", "oss:/dev/dsp", "mpg123 output device", "Audio output device for mpg123. This will be /dev/dsp, /dev/dsp1 for oss, or hw:0, hw:1 for alsa.")
-SettingCreate("dev:mpg321", "oss:/dev/dsp", "mpg321 output device", "Audio output device for mpg321. This will be /dev/dsp, /dev/dsp1 for oss, or hw:0, hw:1 for alsa.")
-SettingCreate("dev:mplayer", "alsa:hw:1,alsa:hw:0,oss:/:dev/:dsp1,oss:/dev/dsp", "mplayer output device", "Audio output device for mplayer. Mplayer can accept a list of devices and use the first one that works. Format is <dev type>:<dev name>. e.g. oss:/dev/dsp or alsa:hw:1")
-SettingCreate("dev:cxine", "alsa:0,alsa:1", "cxine output device", "Audio output device for cxine. CXine can accept a list of devices and use the first one that works. Format is <dev type>:<dev number>. e.g. oss:0 or alsa:1")
-SettingCreate("stop_play_on_exit", true, "Stop playing on exit", "Kill off player app, stopping playback, if user exits castclient.")
-SettingCreate("cache_media_time", "5d", "Max age of cached media", "Downloaded media files get deleted after this much time.")
-SettingCreate("feed_update_time", "5m", "Check for feed updates time", "Time interval to check all feeds for updates.")
-SettingCreate("proxy", "", "Proxy URL", "Proxy to use for all downloads. Format is: <protocol>:<user>:<password>@<host>:<port> protocols are: socks, http, https, sshtunnel.")
+SettingCreate("dev:mpg123", "oss:/dev/dsp", "mpg123 output device", "Audio output device for mpg123. This will be /dev/dsp, /dev/dsp1 for oss, or hw:0, hw:1 for alsa.",false)
+SettingCreate("dev:mpg321", "oss:/dev/dsp", "mpg321 output device", "Audio output device for mpg321. This will be /dev/dsp, /dev/dsp1 for oss, or hw:0, hw:1 for alsa.",false)
+SettingCreate("dev:mplayer", "alsa:hw:1,alsa:hw:0,oss:/:dev/:dsp1,oss:/dev/dsp", "mplayer output device", "Audio output device for mplayer. Mplayer can accept a list of devices and use the first one that works. Format is <dev type>:<dev name>. e.g. oss:/dev/dsp or alsa:hw:1",false)
+SettingCreate("dev:cxine", "alsa:0,alsa:1", "cxine output device", "Audio output device for cxine. CXine can accept a list of devices and use the first one that works. Format is <dev type>:<dev number>. e.g. oss:0 or alsa:1",false)
+SettingCreate("stop_play_on_exit", true, "Stop playing on exit", "Kill off player app, stopping playback, if user exits castclient.",false)
+SettingCreate("cache_media_time", "5d", "Max age of cached media", "Downloaded media files get deleted after this much time.",false)
+SettingCreate("feed_update_time", "5m", "Check for feed updates time", "Time interval to check all feeds for updates.",false)
+SettingCreate("proxy", "", "Proxy URL", "Proxy to use for all downloads. Format is: <protocol>:<user>:<password>@<host>:<port> protocols are: socks, http, https, sshtunnel.",false)
 
+SettingCreate("forward:mpg123", "..", "Forward cmd for mpg123", "send to mpg123 to fast-forward", true)
+SettingCreate("rewind:mpg123", ",,", "Rewind cmd for mpg123", "send to mpg123 to rewind", true)
 
 FindPlayers(settings.players.value)
 
---[[
-control_strings.mpg123_forward="."
-control_strings.mpg123_rewind=","
-]]--
 
 end
 
@@ -1626,7 +1678,7 @@ else
 
 	MainScreen()
 
-	if player_pid > 0 and settings.stop_play_on_exit.value == true then process.kill(player_pid) end
+	if player_pid > 0 and settings.stop_play_on_exit.value == true then player:stop() end
 
 	Out:move(0,0)
 	Out:clear()
