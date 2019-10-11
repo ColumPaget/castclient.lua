@@ -36,6 +36,7 @@ now_playing=""
 curr_chan=""
 
 
+control_strings={}
 
 
 function StripHtml(html)
@@ -344,12 +345,15 @@ end
 
 
 function FeedsRequireUpdate()
+local mtime
 
-if #feeds < 0 then return true end
+if #feeds < 1 then return true end
 
-if (now - filesys.mtime(str)) > settings.feed_update_time.seconds then return true end
+mtime=filesys.mtime(casts_dir.."/feeds.lst")
+if (now - mtime ) > settings.feed_update_time.seconds then return true end
 
 if filesys.size(casts_dir.."/feeds.new") > 0 then return true end
+
 return false
 end
 
@@ -360,10 +364,10 @@ local S, str
 str=casts_dir .. "/feeds.lst"
 
 now=time.secs()
-if FeedsRequireUpdate() ~= true 
-then return feeds,false end
+if FeedsRequireUpdate() ~= true then return feeds,false end
 
 feeds_last_update=now
+
 
 feeds={}
 S=stream.STREAM(str, "r")
@@ -736,7 +740,11 @@ local retval=false
 
 now=time.secs()
  
-if feeds_update_pid==0 and FeedsRequireUpdate() then FeedsUpdate() end
+if feeds_update_pid==0 and FeedsRequireUpdate() == true
+then
+ FeedsUpdate()
+end
+
 DownloadsCleanup(now)
 
 
@@ -1569,6 +1577,11 @@ SettingCreate("proxy", "", "Proxy URL", "Proxy to use for all downloads. Format 
 
 FindPlayers(settings.players.value)
 
+--[[
+control_strings.mpg123_forward="."
+control_strings.mpg123_rewind=","
+]]--
+
 end
 
 
@@ -1594,6 +1607,8 @@ end
 ApplicationInit()
 cmd,url=ParseCommandLine(arg)
 SettingsLoad()
+
+print(string.format("update: %d\n", settings.feed_update_time.seconds))
 
 if cmd=="add" 
 then 
