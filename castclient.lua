@@ -8,8 +8,10 @@ require("time")
 require("hash")
 require("net")
 
-settings={}
+--casts_dir is our main 'working dir' where we store all the config files and downloadable items like rss feeds and media files
 casts_dir=process.getenv("HOME").."/.castclient/"
+
+settings={}
 
 players={}
 player_state_idle=0
@@ -40,6 +42,10 @@ curr_chan=""
 control_strings={}
 
 
+
+
+
+-- strip html out of a string (usually channel/episode descriptions)
 function StripHtml(html)
 local toks, tok, str
 
@@ -62,7 +68,7 @@ return(strutil.htmlUnQuote(str))
 end
 
 
-
+-- display an text area at row 'y' that's 'len' lines long. the text will fill the full width of the page
 function TextArea(y, len, text)
 local str, line, start, wid
 
@@ -90,6 +96,7 @@ end
 
 
 
+-- translate feed names from 'front page' urls to 'rss feed' urls. Currently this only applies to bitchute channel pages
 function TranslateFeed(input_url)
 local bitchute_channel="https://www.bitchute.com/channel/"
 local output_url
@@ -156,6 +163,8 @@ return nil
 end
 
 
+
+-- find a player program that can play a given media url/file
 function SelectPlayer(media_url)
 local player, extn, str, pos,  
 
@@ -175,6 +184,7 @@ return player
 end
 
 
+-- find a setting (named by 'key') for a given player program
 function LookupPlayerSetting(player_path, key)
 local str, setting
 
@@ -186,6 +196,7 @@ return setting.value
 end
 
 
+-- setup the command line for a player program, substituting some values (like playback device) from settings
 function SetupPlayerCommand(player)
 local args, dev, toks, ao_type, ao_id
 
@@ -210,19 +221,33 @@ return player.path.." "..args
 end
 
 
+
+-- start playing a playlist item by looking up a player program that can play the file type and launching that
 function PlayItem(item)
-local cmd, player_info
+local cmd, player_info, media_path
 
 if player_pid > 0 then player:stop() end
 
-player_info=SelectPlayer(item.url) 
-cmd=SetupPlayerCommand(player_info) .. " "..  CachePath(item.url)
+media_path=CachePath(item.url)
 
-player=process.PROCESS(cmd, "noshell pty outnull")
+--whatever happens update the mtime of the file, 'cos we tried to play it, so we don't want it cleaned up
+filesys.touch(media_path)
+player_info=SelectPlayer(item.url) 
+cmd=SetupPlayerCommand(player_info) .. " "..  media_path
+
+player=process.PROCESS(cmd, "noshell outnull")
 if player ~= nil
 then 
 	player_pid=player:pid()	
 	player_state=player_state_play
+
+	--if a play command exists, then use it
+	str=LookupPlayerSetting(player:exec_path(), "play")
+	if str ~= nil 
+	then 
+		cmd=string.gsub(str, "%(url%)", media_path)
+		player:send(cmd) 
+	end
 
 	now_playing=item.title
 	item.pid=player_pid
@@ -235,6 +260,7 @@ end
 
 
 
+-- kill the current player program and start playing the previous item in the playlist
 function PlaybackPrev()
 local i, item, pos
 
@@ -257,6 +283,7 @@ screen_reload_needed=true
 end
 
 
+-- kill the current player program and start playing the next item in the playlist
 function PlaybackNext()
 local i, item
 
@@ -279,7 +306,24 @@ end
 screen_reload_needed=true
 end
 
+-- kill the current player program and start playing the same item from the start
+function PlaybackRestart()
+local i, item
 
+if player_pid > 0 
+then 
+	item=PlaybackGetCurrItem(downloads, player_pid)
+	PlaybackStop() 
+	PlayItem(item) 
+end
+
+screen_reload_needed=true
+end
+
+
+
+
+-- lookup a 'rewind' command for the current player program, and if there is one send it to the program
 function PlaybackRewind()
 local cmd
 
@@ -291,6 +335,7 @@ end
 
 end
 
+-- lookup a 'fast forward' command for the current player program, and if there is one send it to the program
 function PlaybackForward()
 local cmd
 
@@ -304,7 +349,7 @@ end
 
 
 
-
+-- find item in a list of items by it's url. Depending on the list the items could be RSS feeds or podcast episodes/media files
 function FindItemByURL(items, url)
 local i, item
 
@@ -317,6 +362,7 @@ return nil
 end
 
 
+-- generate a unique file path to cache a downloadable item (RSS feed or media file) under
 function CachePath(url)
 local str, urlhash, fname, toks
 
@@ -392,6 +438,7 @@ return i1.updated > i2.updated
 end
 
 
+-- check if it's time to update the feeds.lst file by connecting to RSS feed urls and checking if they've changed
 function FeedsRequireUpdate()
 local mtime
 
@@ -406,6 +453,7 @@ return false
 end
 
 
+-- load list of available feeds from the feeds.lst file
 function FeedsGetList()
 local S, str
 
@@ -434,7 +482,7 @@ return feeds,true
 end
 
 
-
+-- formats a feed to be displayed on the main feed screen, coloring it to indicate recently updated feeds
 function FeedTitle(item)
 local str, daysecs, diff
 local timecolor=""
@@ -463,6 +511,7 @@ return str
 end
 
 
+-- dates in feeds are a bit of a mess. In general no-one in tech seems able to agree on a date format!
 function FeedParseDate(parser)
 local toks, str, when
 
@@ -490,6 +539,7 @@ return when
 end
 
 
+-- get a feed RSS file from cache, or download if cache is too old
 function FeedGet(url)
 local S, P, I, choice, str
 local latest=0
@@ -550,7 +600,7 @@ return chan,items
 end
 
 
-
+-- this is called by the feeds update process and writes out the list of feeds to a new feeds.lst file
 function FeedsSave(feed_list)
 local i, item, S, str
 
@@ -572,6 +622,7 @@ end
 end
 
 
+--feeds are added to a feeds.new file to prevent two processes trying to write to feeds.lst file at the same time. The feeds update process will then pull in any items in feeds.new when it's free to do so
 function FeedsAdd(url)
 local S, str
 
@@ -592,6 +643,7 @@ screen_reload_needed=true
 end
 
 
+-- dialog that prompts the user to enter a feed url to be added to the feeds list
 function FeedsAddDialog()
 local url
 
@@ -613,6 +665,7 @@ Out:clear()
 end
 
 
+-- if a feed has been added to the list of feeds it goes in a 'feeds.new' file. This is to prevent two processes trying to write to the feeds.lst file at the same time. In this scheme only the feeds update process edits the feeds.lst file, but it checks if a feeds.new file exists and imports it into the main feeds.lst file
 function FeedsImportNew()
 local FeedsS, NewFeedsS, str, chan
 
@@ -643,6 +696,8 @@ end
 end
 
 
+-- this function is called within a forked-off subprocess, hence the os.exit() at the end of it
+-- it's job is to download and import feed urls to see if any new items have appeared
 function FeedsUpdateSubprocess()
 local i, feed, chan, items
 
@@ -669,8 +724,7 @@ local i, feed, chan, items
 end
 
 
--- this function updates the feeds.lst status file in the .castclient 
--- directory
+-- this function updates the feeds.lst status file in the .castclient directory
 function FeedsUpdate()
 local lockfile
 
@@ -728,7 +782,7 @@ return nil
 end
 
 
-
+-- do any reformatting that's needed to get the real download URL of a media item. This currently only applies to bitchute, where we have to do a dance to find the 'real' url of a media file 
 function DownloadPreProcess(item)
 local bitchute_url="https://www.bitchute.com/embed/"
 local toks, tok, str
@@ -762,6 +816,7 @@ end
 end
 
 
+-- clear old items out of the download cache
 function DownloadsCleanup(now)
 local str, files
 
@@ -781,7 +836,8 @@ end
 end
 
 
-function DownloadsProcess()
+-- go through the playlist checking if items need downloading or playing until all have been downloaded and played
+function PlaylistProcess()
 local pid=0
 local next_item, now
 local retval=false
@@ -836,8 +892,8 @@ return retval
 end
 
 
-
-function DownloadAdd(item)
+-- add an item to the playlist
+function PlaylistAdd(item)
 local path
 
 item.pid=0
@@ -849,12 +905,12 @@ if filesys.exists(CachePath(item.url)) > 0 then item.downloaded=true end
 
 table.insert(downloads, item)
 
-DownloadsProcess()
+PlaylistProcess()
 screen_reload_needed=true
 end
 
 
-
+-- get the position in the playlist of the currently playing item
 function NowPlayingItemNo()
 
 for i,item in ipairs(downloads)
@@ -875,10 +931,20 @@ function HelpDisplay()
 	Out:puts("    escape       Press escape twice to exit a menu or the app\n")
 	Out:puts("    up arrow     Move menu selection up\n")
 	Out:puts("    down arrow   Move menu selection down\n")
+	Out:puts("    left arrow   Switch between top-level menus\n")
+	Out:puts("    right arrow  Switch between top-level menus\n")
 	Out:puts("    enter        Activate selected menu item\n")
+	Out:puts("    delete       Delete feed on feeds screen, or item on playlist screen\n")
 	Out:puts("    a            Add a new feed\n")
 	Out:puts("    c            Clear playlist (only available on playlist screen)\n")
-	Out:puts("    delete       Delete feed on feeds screen, or item on playlist screen\n")
+	Out:puts("    s            Stop playback\n")
+	Out:puts("    home         Restart playback from beginning\n")
+	Out:puts("    end          Stop playback\n")
+	Out:puts("    space        Pause current playback\n")
+	Out:puts("    shift-left   Rewind current playback\n")
+	Out:puts("    shift-right  Fast-forward current playback\n")
+	Out:puts("    ctrl-left    Skip to previous playlist item\n")
+	Out:puts("    ctrl-right   Skip to next playlist item\n")
 
 	Out:puts("\n")
 	Out:puts("~ePRESS ANY KEY TO CLOSE THIS SCREEN\n")
@@ -894,7 +960,7 @@ function HelpDisplay()
 end
 
 
-
+-- draw the status bar at the bottom of the screen
 function StatusBarDisplay()
 local str, item
 
@@ -925,6 +991,7 @@ Out:puts(str)
 end
 
 
+-- draw the top bar that allows selecting between the top-level screens
 function DrawMenuSelection()
 local str
 
@@ -960,7 +1027,7 @@ Out:flush()
 end
 
 
-
+-- process the current screen. This loops until a keypress or other event needs handling
 function ProcessScreen(Screen)
 local ch, str
 
@@ -971,6 +1038,7 @@ while str==nil
 do
 	if ch ~= ""
 	then
+
 	if ch=="ESC" or ch=="BACKSPACE"
 	then 
 		--clear output so next screen isn't messed up
@@ -987,9 +1055,8 @@ do
 	then
 		FeedsAddDialog()
 		ScreenRefresh(Screen)
-	elseif ch=="F12" or ch=="END" or ch=="s"
-	then
-		PlaybackStop()
+	elseif ch=="HOME" then PlaybackRestart()
+	elseif ch=="END" or ch=="s" then PlaybackStop()
 	elseif ch=="LEFT"
 	then
 		Out:clear()
@@ -1031,7 +1098,7 @@ do
 
 	end
 
-	if ch ~= "" or DownloadsProcess() == true then ScreenRefresh(Screen) end
+	if ch ~= "" or PlaylistProcess() == true then ScreenRefresh(Screen) end
 
 	ch=Out:getc()
 end
@@ -1057,7 +1124,7 @@ end
 end
 
 
-
+-- if a feed is selected on the feed screen, then this screen is displayed showing the episodes/playable items
 function FeedItemsMenu(url, feeds)
 local items, item, Menu, i, toks, str, choice
 local Screen={}
@@ -1081,7 +1148,7 @@ do
 	if choice==nil then break end
 
 	item=FindItemByURL(items, choice)
-	if item ~= nil then DownloadAdd(item) end
+	if item ~= nil then PlaylistAdd(item) end
 end
 
 end
@@ -1172,7 +1239,7 @@ return str
 end
 
 
-
+-- the main front screen that shows all the available feeds
 function SetupFeedsScreen()
 local item, i
 local Screen={}
@@ -1277,6 +1344,7 @@ end
 end
 
 
+-- creates the screen that shows the playlist of items queued for playing
 function SetupPlaylistScreen()
 local Screen={}
 local i, item
@@ -1300,7 +1368,7 @@ end
 
 
 
-
+-- creates a configuration item. If 'hide' is true, then this is not displayed to the user or saved, it's a 'fixed' setting. Otherwise this setting will be presented to the user on the settings screen with name 'title' and detailed description of 'desc'
 function SettingCreate(name, value, title, desc, hide)
 local item={}
 local toks, token, seconds, str
@@ -1334,6 +1402,8 @@ then
 	end
 end
 
+
+-- some settings express a time period, and consist of a number followed by 'm' for minutes, 'h' for hours, 'd' for days, 'w' for weeks, or else are in seconds. We parse them here and set a value 'seconds' on the setting item for future use
 str=""
 seconds=0
 if name == "cache_media_time" or name == "feed_update_time"
@@ -1375,6 +1445,7 @@ end
 end
 
 
+-- screen that prompts the user to alter a setting
 function SettingsRead(setting)
 local str
 
@@ -1386,7 +1457,7 @@ Out:move(0,0)
 Out:puts("~B~wEdit Setting: " .. setting.title .. "~>~0\n\n")
 Out:puts(setting.description.."\n\n")
 Out:puts("Hit escape twice to cancel setting change\n\n")
-str=Out:prompt("~eEnter value:~0 ")
+str=Out:prompt("~eEnter value:~0 ", setting.value)
 
 --clear output so next screen isn't messed up
 Out:clear()
@@ -1395,7 +1466,7 @@ return str
 end
 
 
-
+-- save settings in ~/.castclient/settings.conf. Note that hidden settings are fixed and are not saved.
 function SettingsSave()
 local key, item, S
 
@@ -1405,7 +1476,7 @@ then
 	S:lock()
 	for key,item in pairs(settings)
 	do
-		S:writeln(item.name .. "=" .. tostring(item.value) .."\n");
+		if item.hide ~= true then S:writeln(item.name .. "=" .. tostring(item.value) .."\n"); end
 	end
 	S:unlock()
 	S:close()
@@ -1415,7 +1486,7 @@ end
 end
 
 
-
+-- load settings from the config file
 function SettingsLoad()
 local str, itype, name, value, toks, S
 
@@ -1443,7 +1514,7 @@ end
 end
 
 
-
+-- called when a setting item is selected from the settings menu
 function SettingsOnSelect(config, items)
 local toks, name, value, str
 
@@ -1463,6 +1534,7 @@ end
 
 SettingsSave()
 end
+
 
 
 function SettingsMenuSortCompare(i1, i2)
@@ -1522,8 +1594,8 @@ end
 
 
 
-
-function MainScreen()
+--main loop creates all the screens and then calls 'ProcessScreen' on the current one. keypresses handled within ProcessScreen can switch between these screens
+function InteractiveModeMainLoop()
 local SettingsScreen, PlaylistScreen, FeedsScreen
 local Screen
 
@@ -1569,26 +1641,35 @@ end
 
 
 
+-- if a player program has been found on the current system, then add it to the list of available players
 function PlayerAdd(media, setup)
-local path, toks, cmd
+local path, toks, cmd, args
 local player={}
 
 	toks=strutil.TOKENIZER(setup, " ")
 	cmd=toks:next()
-
+	args=toks:remaining()
 	path=filesys.find(cmd, process.getenv("PATH"))
+
 	if strutil.strlen(path) > 0
 	then
+		toks=strutil.TOKENIZER(media, ',')
+		extn=toks:next()
+		while extn ~= nil
+		do
 		player={}
-		player.extn=media
+		player.extn=extn
 		player.path=path
-		player.args=toks:remaining()
+		player.args=args 
 		table.insert(players, player)
+		extn=toks:next()
+		end
 	end
 end
 
 
 
+-- search for playback programs like mplayer or mpg123 that are installed on the current system
 function FindPlayers(search_template)
 local toks, media, player
 
@@ -1617,7 +1698,7 @@ end
 
 function ApplicationInit()
 
-SettingCreate("players", "mp3:'mpg123 -C -o (ao_type) -a (ao_id)';mp3:'mpg321 -o (ao_type) -a (ao_id)';mp3:madplay:ogg:ogg123;*:'cxine -ao (dev) +ss';*:'mplayer -ao (dev)'", "Players", "List of media players to search for and use.", false)
+SettingCreate("players", "mp3:'mpg123 -R -o (ao_type) -a (ao_id)';mp3:'mpg321 -R -o (ao_type) -a (ao_id)';mp3:'madplay --tty-control':ogg:ogg123;*:'cxine -ao (dev) +ss';*:'mplayer -ao (dev) -quiet -slave';mp3,ogg,flac,aac:'play -q --magic'", "Players", "List of media players to search for and use.", false)
 
 SettingCreate("dev:mpg123", "oss:/dev/dsp", "mpg123 output device", "Audio output device for mpg123. This will be /dev/dsp, /dev/dsp1 for oss, or hw:0, hw:1 for alsa.",false)
 SettingCreate("dev:mpg321", "oss:/dev/dsp", "mpg321 output device", "Audio output device for mpg321. This will be /dev/dsp, /dev/dsp1 for oss, or hw:0, hw:1 for alsa.",false)
@@ -1628,8 +1709,27 @@ SettingCreate("cache_media_time", "5d", "Max age of cached media", "Downloaded m
 SettingCreate("feed_update_time", "5m", "Check for feed updates time", "Time interval to check all feeds for updates.",false)
 SettingCreate("proxy", "", "Proxy URL", "Proxy to use for all downloads. Format is: <protocol>:<user>:<password>@<host>:<port> protocols are: socks, http, https, sshtunnel.",false)
 
-SettingCreate("forward:mpg123", "..", "Forward cmd for mpg123", "send to mpg123 to fast-forward", true)
-SettingCreate("rewind:mpg123", ",,", "Rewind cmd for mpg123", "send to mpg123 to rewind", true)
+SettingCreate("play:mpg123", "load (url)\r\n", "Play cmd for mpg123", "send to mpg123 to fast-forward", true)
+SettingCreate("forward:mpg123", "jump +20\r\n", "Forward cmd for mpg123", "send to mpg123 to fast-forward", true)
+SettingCreate("rewind:mpg123", "jump -20\r\n", "Rewind cmd for mpg123", "send to mpg123 to rewind", true)
+
+
+SettingCreate("play:mpg321", "load (url)\r\n", "Play cmd for mpg123", "send to mpg123 to fast-forward", true)
+SettingCreate("forward:mpg321", "jump +20\r\n", "Forward cmd for mpg123", "send to mpg123 to fast-forward", true)
+SettingCreate("rewind:mpg321", "jump -20\r\n", "Rewind cmd for mpg123", "send to mpg123 to rewind", true)
+
+SettingCreate("forward:madplay", "F", "Forward cmd for madplay", "send to madplay to fast-forward", true)
+SettingCreate("rewind:madplay", "B", "Rewind cmd for madplay", "send to madplay to rewind", true)
+
+
+SettingCreate("play:mplayer", "loadfile (url)\r\n", "Play cmd for mplayer", "send to mplayer to fast-forward", true)
+SettingCreate("forward:mplayer", "seek +10\r\n", "Forward cmd for mplayer", "send to mplayer to fast-forward", true)
+SettingCreate("rewind:mplayer", "seek -10\r\n", "Rewind cmd for mplayer", "send to mplayer to rewind", true)
+
+SettingCreate("play:cxine", "loadfile (url)\r\n", "Play cmd for cxine", "send to cxine to fast-forward", true)
+SettingCreate("forward:cxine", "seek +10\r\n", "Forward cmd for cxine", "send to cxine to fast-forward", true)
+SettingCreate("rewind:cxine", "seek -10\r\n", "Rewind cmd for cxine", "send to cxine to rewind", true)
+
 
 FindPlayers(settings.players.value)
 
@@ -1676,7 +1776,7 @@ else
 	Out:move(0,0)
 	Out:clear()
 
-	MainScreen()
+	InteractiveModeMainLoop()
 
 	if player_pid > 0 and settings.stop_play_on_exit.value == true then player:stop() end
 
