@@ -235,7 +235,7 @@ filesys.touch(media_path)
 player_info=SelectPlayer(item.url) 
 cmd=SetupPlayerCommand(player_info) .. " "..  media_path
 
-player=process.PROCESS(cmd, "noshell outnull")
+player=process.PROCESS(cmd, "pty noshell outnull")
 if player ~= nil
 then 
 	player_pid=player:pid()	
@@ -1031,6 +1031,7 @@ end
 function ProcessScreen(Screen)
 local ch, str
 
+if process.sigwatch ~= nil then process.sigwatch(28) end
 ScreenRefresh(Screen)
 
 ch=Out:getc()
@@ -1097,6 +1098,13 @@ do
 	end
 
 	end
+
+	if process.sigcheck ~= nil and process.sigcheck(28) > 0
+	then
+		screen_reload_needed=true
+		Out:clear()
+		return ""
+	end 
 
 	if ch ~= "" or PlaylistProcess() == true then ScreenRefresh(Screen) end
 
@@ -1636,7 +1644,6 @@ do
 	end
 end
 
-
 end
 
 
@@ -1698,7 +1705,7 @@ end
 
 function ApplicationInit()
 
-SettingCreate("players", "mp3:'mpg123 -R -o (ao_type) -a (ao_id)';mp3:'mpg321 -R -o (ao_type) -a (ao_id)';mp3:'madplay --tty-control':ogg:ogg123;*:'cxine -ao (dev) +ss';*:'mplayer -ao (dev) -quiet -slave';mp3,ogg,flac,aac:'play -q --magic'", "Players", "List of media players to search for and use.", false)
+SettingCreate("players", "mp3:'mpg123 -C -o (ao_type) -a (ao_id)';mp3:'mpg321 -R -o (ao_type) -a (ao_id)';mp3:'madplay --tty-control':ogg:ogg123;*:'cxine -ao (dev) +ss';*:'mplayer -ao (dev) -quiet -slave';mp3,ogg,flac,aac:'play -q --magic'", "Players", "List of media players to search for and use.", false)
 
 SettingCreate("dev:mpg123", "oss:/dev/dsp", "mpg123 output device", "Audio output device for mpg123. This will be /dev/dsp, /dev/dsp1 for oss, or hw:0, hw:1 for alsa.",false)
 SettingCreate("dev:mpg321", "oss:/dev/dsp", "mpg321 output device", "Audio output device for mpg321. This will be /dev/dsp, /dev/dsp1 for oss, or hw:0, hw:1 for alsa.",false)
@@ -1709,9 +1716,8 @@ SettingCreate("cache_media_time", "5d", "Max age of cached media", "Downloaded m
 SettingCreate("feed_update_time", "5m", "Check for feed updates time", "Time interval to check all feeds for updates.",false)
 SettingCreate("proxy", "", "Proxy URL", "Proxy to use for all downloads. Format is: <protocol>:<user>:<password>@<host>:<port> protocols are: socks, http, https, sshtunnel.",false)
 
-SettingCreate("play:mpg123", "load (url)\r\n", "Play cmd for mpg123", "send to mpg123 to fast-forward", true)
-SettingCreate("forward:mpg123", "jump +20\r\n", "Forward cmd for mpg123", "send to mpg123 to fast-forward", true)
-SettingCreate("rewind:mpg123", "jump -20\r\n", "Rewind cmd for mpg123", "send to mpg123 to rewind", true)
+SettingCreate("forward:mpg123", "..", "Forward cmd for mpg123", "send to mpg123 to fast-forward", true)
+SettingCreate("rewind:mpg123", ",,", "Rewind cmd for mpg123", "send to mpg123 to rewind", true)
 
 
 SettingCreate("play:mpg321", "load (url)\r\n", "Play cmd for mpg123", "send to mpg123 to fast-forward", true)
@@ -1760,7 +1766,6 @@ ApplicationInit()
 cmd,url=ParseCommandLine(arg)
 SettingsLoad()
 
-print(string.format("update: %d\n", settings.feed_update_time.seconds))
 
 if cmd=="add" 
 then 
