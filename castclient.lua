@@ -397,13 +397,13 @@ local path, done_path
 path=CachePath(url)
 done_path=path..".rss"
 
-if filesys.exists(done_path)==0 or CachedFeedIsOld(done_path)
+if filesys.exists(done_path) == true or CachedFeedIsOld(done_path)
 then
 	filesys.copy(url, path)
 	filesys.rename(path, done_path)
 end
 
-if filesys.exists(done_path) > 0 then return done_path end
+if filesys.exists(done_path) == true then return done_path end
 
 return url
 end
@@ -901,7 +901,7 @@ item.downloaded=false
 item.played=false
 
 DownloadPreProcess(item)
-if filesys.exists(CachePath(item.url)) > 0 then item.downloaded=true end
+if filesys.exists(CachePath(item.url)) == true then item.downloaded=true end
 
 table.insert(downloads, item)
 
@@ -1099,7 +1099,7 @@ do
 
 	end
 
-	if process.sigcheck ~= nil and process.sigcheck(28) > 0
+	if process.sigcheck ~= nil and process.sigcheck(28) == true
 	then
 		screen_reload_needed=true
 		Out:clear()
