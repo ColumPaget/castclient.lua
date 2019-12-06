@@ -1142,8 +1142,10 @@ local Screen={}
 Out:clear()
 curr_chan,items=FeedGet(url)
 Screen.menu=terminal.TERMMENU(Out, 2, 3, Out:width()-4, Out:length() - 10)
+Screen.menu:config("~C~n", "~B~y")
 Screen.items=items
 Screen.draw=FeedItemsScreenUpdate
+
 
 for i,item in ipairs(items)
 do
