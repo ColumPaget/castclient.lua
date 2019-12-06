@@ -1075,10 +1075,10 @@ do
 	elseif ch=="CTRL_RIGHT"
 	then
 		PlaybackNext()
-	elseif ch=="SHIFT_LEFT"
+	elseif ch=="SHIFT_LEFT" or ch==","
 	then
 		PlaybackRewind()
-	elseif ch=="SHIFT_RIGHT"
+	elseif ch=="SHIFT_RIGHT" or ch=="."
 	then
 		PlaybackForward()
 	else
@@ -1323,7 +1323,7 @@ then
 else
 	str=Screen.menu:onkey(key)
 	Screen.menu:draw()
-	PlaylistScreenDraw()
+	PlaylistScreenDraw(Screen)
 end
 
 return str
