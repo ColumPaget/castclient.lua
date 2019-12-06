@@ -1021,7 +1021,6 @@ DrawMenuSelection()
 if Screen.update ~= nil then Screen:update() end
 if Screen.draw ~= nil then Screen:draw() end
 
-Screen.menu:draw()
 StatusBarDisplay()
 Out:flush()
 end
@@ -1055,7 +1054,7 @@ do
 	elseif ch=="a"
 	then
 		FeedsAddDialog()
-		ScreenRefresh(Screen)
+		screen_reload_needed=true
 	elseif ch=="HOME" then PlaybackRestart()
 	elseif ch=="END" or ch=="s" then PlaybackStop()
 	elseif ch=="LEFT"
@@ -1129,6 +1128,7 @@ item=FindItemByURL(Screen.items, str)
 if item ~= nil then TextArea(Out:length() -5, 3, item.description) end
 end
 
+Screen.menu:draw()
 end
 
 
@@ -1139,19 +1139,18 @@ local Screen={}
 
 Out:clear()
 curr_chan,items=FeedGet(url)
-Menu=terminal.TERMMENU(Out, 2, 3, Out:width()-4, Out:length() - 10)
+Screen.menu=terminal.TERMMENU(Out, 2, 3, Out:width()-4, Out:length() - 10)
+Screen.items=items
+Screen.draw=FeedItemsScreenUpdate
 
 for i,item in ipairs(items)
 do
 	str=time.formatsecs("%Y/%m/%d", item.when)  .. "  ".. item.title
-	Menu:add(str, item.url)
+	Screen.menu:add(str, item.url)
 end
 
 while true
 do
-	Screen.menu=Menu
-	Screen.items=items
-	Screen.draw=FeedItemsScreenUpdate
 	choice=ProcessScreen(Screen)
 	if choice==nil then break end
 
@@ -1195,22 +1194,23 @@ end
 
 
 function FeedsScreenUpdate(Screen)
-local new_items, i, item, str
+local new_items, i, item, new_item, str
 local updated=false
 
 new_items,updated=FeedsGetList()
 
-if updated==true
-then
-for i,item in ipairs(Screen.items)
-do
-	new_item=FindItemByURL(new_items, item.url)
-	if new_item ~= nil and new_item.updated > item.updated
-	then
-		Screen.items[i]=new_item
-		Screen.menu:update(FeedTitle(new_item), new_item.url)
-	end
+if updated==true 
+then 
+for i,item in ipairs(Screen.items) 
+do 
+  new_item=FindItemByURL(new_items, item.url) 
+  if new_item ~= nil and new_item.updated > item.updated 
+  then 
+    Screen.items[i]=new_item 
+    Screen.menu:update(FeedTitle(new_item), new_item.url) 
+  end 
 end
+
 
 --load pending items into screen.items directly because they are not
 --updates of existing items
@@ -1220,6 +1220,18 @@ screen_reload_needed=true
 if updated == true then Screen.menu:draw() end
 end
 
+end
+
+
+function FeedsScreenDraw(Screen )
+
+if #Screen.items > 0
+then
+	Screen.menu:draw()
+else
+	Out:move(2, 2)
+	Out:puts("~eNo feeds configured. Press 'a' to add one~0\n")
+end
 end
 
 
@@ -1253,16 +1265,18 @@ local item, i
 local Screen={}
 
 Screen.menu=terminal.TERMMENU(Out, 2, 3, Out:width()-4, Out:length() - 10)
+Screen.draw=FeedsScreenDraw
+Screen.update=FeedsScreenUpdate
+Screen.on_key=FeedsScreenOnKey
+Screen.on_select=FeedItemsMenu
+
+
 Screen.items=FeedsGetList()
 table.sort(Screen.items, FeedsSortByTime)
 for i,item in ipairs(Screen.items)
 do
 	Screen.menu:add(FeedTitle(item), item.url)
 end
-
-Screen.update=FeedsScreenUpdate
-Screen.on_key=FeedsScreenOnKey
-Screen.on_select=FeedItemsMenu
 
 return Screen
 end
@@ -1292,6 +1306,8 @@ if #downloads == 0
 then
 	Out:move(1, 2)
 	Out:puts("  ~ePlaylist is currently empty, nothing to see here, move along~0\n")
+	else
+	Screen.menu:draw()
 end
 end
 
@@ -1569,6 +1585,7 @@ then
 	if item ~= nil then TextArea(Out:length() -5, 3, item.description) end
 end
 
+Screen.menu:draw()
 end
 
 
