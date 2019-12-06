@@ -583,7 +583,7 @@ do
 		if strutil.strlen(item.url) == 0 then item.url=I:value("link") end
 		item.size=I:value("enclosure_length")
 		item.title=strutil.htmlUnQuote(strutil.htmlUnQuote(strutil.unQuote(I:value("title"))))
-		item.description=StripHtml(I:value("description"))
+		item.description=string.gsub(StripHtml(I:value("description")), "\r\n", "\n")
 		item.when=time.tosecs("%a, %d %b %Y %H:%M:%S", I:value("pubDate"))
 		item.when=FeedParseDate(I)
 		if latest < item.when then latest=item.when end
@@ -1114,6 +1114,8 @@ return str
 end
 
 
+-- this doesn't touch any items in the menu, but it does update the description text below the menu
+-- as the user moves from episode to episode
 function FeedItemsScreenUpdate(Screen)
 local str, item
 
@@ -1124,8 +1126,8 @@ Out:puts(str);
 str=Screen.menu:curr()
 if str ~=nil
 then
-item=FindItemByURL(Screen.items, str)
-if item ~= nil then TextArea(Out:length() -5, 3, item.description) end
+	item=FindItemByURL(Screen.items, str)
+	if item ~= nil then TextArea(Out:length() -5, 3, item.description) end
 end
 
 Screen.menu:draw()
@@ -1145,7 +1147,17 @@ Screen.draw=FeedItemsScreenUpdate
 
 for i,item in ipairs(items)
 do
-	str=time.formatsecs("%Y/%m/%d", item.when)  .. "  ".. item.title
+	str=time.formatsecs("%Y/%m/%d", item.when)  .. "  ~w".. item.title .."~0"
+	-- if using a version of libuseful that has a width setter, then we can be smarter about what we display
+	if Screen.menu.width ~= nil
+	then
+	if strutil.strlen(str) < (Screen.menu:width() - 34) 
+	then 
+		str=str.. "    " .. item.description 
+		str=string.sub(str, 1, Screen.menu:width()-4)
+		str=string.gsub(str, "\n", " ")
+	end
+	end
 	Screen.menu:add(str, item.url)
 end
 
