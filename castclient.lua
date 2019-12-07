@@ -379,25 +379,20 @@ return str
 end
 
 
-function CachedFeedIsOld(path)
-
-	if time.secs() - tonumber(filesys.mtime(path)) > 600 then return true end
-
-	return false
-end
-
-
 
 -- this function checks if a url is in the cache. If not, or if it's older than a certain 
 -- amount, it downloads the url to the cache. If the cache dir is not writable it returns 
 -- the original url, otherwise it returns a path to the downloaded file
 function FeedFromCache(url)
 local path, done_path
+local cache_age=0
 
 path=CachePath(url)
 done_path=path..".rss"
 
-if filesys.exists(done_path) == true or CachedFeedIsOld(done_path)
+if filesys.exists(done_path) == true then cache_age=filesys.mtime(done_path) end
+
+if time.secs() - cache_age > settings.feed_cache_time.seconds
 then
 	filesys.copy(url, path)
 	filesys.rename(path, done_path)
@@ -699,10 +694,11 @@ end
 -- this function is called within a forked-off subprocess, hence the os.exit() at the end of it
 -- it's job is to download and import feed urls to see if any new items have appeared
 function FeedsUpdateSubprocess()
-local i, feed, chan, items
+local i, feed, chan, items, last_save
 
 	FeedsImportNew()
 	feed_list=FeedsGetList()
+	last_save=time.secs()
 
 	for i,feed in ipairs(feed_list)
 	do
@@ -716,6 +712,13 @@ local i, feed, chan, items
 		feed.updated=chan.updated
 		feed.size=#items
 		end
+		end
+
+		--every ten seconds update whatever we have so far
+		if (time.secs() - last_save) > 10 
+		then 
+			FeedsSave(feed_list)
+			last_save=time.secs()
 		end
 	end
 
@@ -1444,7 +1447,7 @@ end
 -- some settings express a time period, and consist of a number followed by 'm' for minutes, 'h' for hours, 'd' for days, 'w' for weeks, or else are in seconds. We parse them here and set a value 'seconds' on the setting item for future use
 str=""
 seconds=0
-if name == "cache_media_time" or name == "feed_update_time"
+if name == "cache_media_time" or name == "feed_update_time" or name == "feed_cache_time"
 then
 	toks=strutil.TOKENIZER(value, "s|m|h|d|w| |	", "ms")
 	token=toks:next()
@@ -1746,7 +1749,8 @@ SettingCreate("dev:cxine", "alsa:0,alsa:1", "cxine output device", "Audio output
 SettingCreate("exit_key", "Q", "Exit Key", "Key that exits application. Most keys are just indicated by their letter, uppercase for 'shift-key'. e.g. 'a' for the a key, 'A' for shift-a key. Some keys have names: 'ESC' for escape, HOME, INSERT, DELETE, WIN, MENU, F1, F2, F3...", false)
 SettingCreate("stop_play_on_exit", true, "Stop playing on exit", "Kill off player app, stopping playback, if user exits castclient.",false)
 SettingCreate("cache_media_time", "5d", "Max age of cached media", "Downloaded media files get deleted after this much time.",false)
-SettingCreate("feed_update_time", "5m", "Check for feed updates time", "Time interval to check all feeds for updates.",false)
+SettingCreate("feed_update_time", "10m", "Check for feed updates time", "Time interval to check all feeds for updates, launches a background process that updates all configured feeds.",false)
+SettingCreate("feed_cache_time", "5m", "Feed cache age", "If a feed is accessed (by selecting it in the feeds menu), check it for updates if it's older than this before displaying it.", false)
 SettingCreate("proxy", "", "Proxy URL", "Proxy to use for all downloads. Format is: <protocol>:<user>:<password>@<host>:<port> protocols are: socks, http, https, sshtunnel.",false)
 
 SettingCreate("forward:mpg123", "..", "Forward cmd for mpg123", "send to mpg123 to fast-forward", true)
