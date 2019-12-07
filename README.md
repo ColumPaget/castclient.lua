@@ -47,3 +47,6 @@ KEY BINDINGS
     ctrl-left    Skip to previous playlist item
     ctrl-right   Skip to next playlist item
 ```
+
+
+![screenshot](castclient.png)
