@@ -439,6 +439,7 @@ local mtime
 
 if #feeds < 1 then return true end
 
+now=time.secs()
 mtime=filesys.mtime(casts_dir.."/feeds.lst")
 if (now - mtime ) > settings.feed_update_time.seconds then return true end
 
@@ -455,11 +456,13 @@ local S, str
 str=casts_dir .. "/feeds.lst"
 
 now=time.secs()
-if FeedsRequireUpdate() ~= true then return feeds,false end
+mtime=filesys.mtime(casts_dir.."/feeds.lst")
+--if feeds exists, and the feeds file is older than it, then use cached feeds
+if feeds ~= nil and mtime < feeds_last_update then return feeds,false end
 
 feeds_last_update=now
 
-
+--load new feeds
 feeds={}
 S=stream.STREAM(str, "r")
 if S ~= nil
