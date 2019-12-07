@@ -1039,11 +1039,11 @@ do
 	if ch ~= ""
 	then
 
-	if ch=="ESC" or ch=="BACKSPACE"
+	if ch=="ESC" or ch=="BACKSPACE" or ch==settings.exit_key.value
 	then 
 		--clear output so next screen isn't messed up
 		Out:clear()
-		return nil 
+		return ch 
 	elseif ch==" "
 	then
 		PlaybackPause()
@@ -1116,7 +1116,7 @@ end
 
 -- this doesn't touch any items in the menu, but it does update the description text below the menu
 -- as the user moves from episode to episode
-function FeedItemsScreenUpdate(Screen)
+function EpisodesScreenUpdate(Screen)
 local str, item
 
 Out:move(0, 0)
@@ -1135,7 +1135,7 @@ end
 
 
 -- if a feed is selected on the feed screen, then this screen is displayed showing the episodes/playable items
-function FeedItemsMenu(url, feeds)
+function EpisodesMenu(url, feeds)
 local items, item, Menu, i, toks, str, choice
 local Screen={}
 
@@ -1144,7 +1144,7 @@ curr_chan,items=FeedGet(url)
 Screen.menu=terminal.TERMMENU(Out, 2, 3, Out:width()-4, Out:length() - 10)
 Screen.menu:config("~C~n", "~B~y")
 Screen.items=items
-Screen.draw=FeedItemsScreenUpdate
+Screen.draw=EpisodesScreenUpdate
 
 
 for i,item in ipairs(items)
@@ -1153,7 +1153,7 @@ do
 	-- if using a version of libuseful that has a width setter, then we can be smarter about what we display
 	if Screen.menu.width ~= nil
 	then
-	if strutil.strlen(str) < (Screen.menu:width() - 34) 
+	if strutil.strlen(str) < (Screen.menu:width() - 24) 
 	then 
 		str=str.. "    " .. item.description 
 		str=string.sub(str, 1, Screen.menu:width()-4)
@@ -1166,7 +1166,7 @@ end
 while true
 do
 	choice=ProcessScreen(Screen)
-	if choice==nil then break end
+	if choice=="ESC" then break end
 
 	item=FindItemByURL(items, choice)
 	if item ~= nil then PlaylistAdd(item) end
@@ -1282,7 +1282,7 @@ Screen.menu=terminal.TERMMENU(Out, 2, 3, Out:width()-4, Out:length() - 10)
 Screen.draw=FeedsScreenDraw
 Screen.update=FeedsScreenUpdate
 Screen.on_key=FeedsScreenOnKey
-Screen.on_select=FeedItemsMenu
+Screen.on_select=EpisodesMenu
 
 
 Screen.items=FeedsGetList()
@@ -1493,9 +1493,10 @@ Out:puts("~B~wEdit Setting: " .. setting.title .. "~>~0")
 
 Out:move(0,0)
 Out:puts("~B~wEdit Setting: " .. setting.title .. "~>~0\n\n")
-Out:puts(setting.description.."\n\n")
+Out:puts("~b~e" .. setting.description .. "~0\n\n")
 Out:puts("Hit escape twice to cancel setting change\n\n")
-str=Out:prompt("~eEnter value:~0 ", setting.value)
+Out:puts("Current value: " .. setting.value .. "\n\b")
+str=Out:prompt("~eEnter new value:~0 ", setting.value)
 
 --clear output so next screen isn't messed up
 Out:clear()
@@ -1663,10 +1664,10 @@ do
 
 	str=ProcessScreen(Screen)
 
-	if str == nil 
+	if str == settings.exit_key.value
 	then 
 		break
-	elseif str == ""
+	elseif str == "" or str=="ESC"
 	then
 		--do nothing
 	else 
@@ -1742,6 +1743,7 @@ SettingCreate("dev:mpg123", "oss:/dev/dsp", "mpg123 output device", "Audio outpu
 SettingCreate("dev:mpg321", "oss:/dev/dsp", "mpg321 output device", "Audio output device for mpg321. This will be /dev/dsp, /dev/dsp1 for oss, or hw:0, hw:1 for alsa.",false)
 SettingCreate("dev:mplayer", "alsa:hw:1,alsa:hw:0,oss:/:dev/:dsp1,oss:/dev/dsp", "mplayer output device", "Audio output device for mplayer. Mplayer can accept a list of devices and use the first one that works. Format is <dev type>:<dev name>. e.g. oss:/dev/dsp or alsa:hw:1",false)
 SettingCreate("dev:cxine", "alsa:0,alsa:1", "cxine output device", "Audio output device for cxine. CXine can accept a list of devices and use the first one that works. Format is <dev type>:<dev number>. e.g. oss:0 or alsa:1",false)
+SettingCreate("exit_key", "Q", "Exit Key", "Key that exits application. Most keys are just indicated by their letter, uppercase for 'shift-key'. e.g. 'a' for the a key, 'A' for shift-a key. Some keys have names: 'ESC' for escape, HOME, INSERT, DELETE, WIN, MENU, F1, F2, F3...", false)
 SettingCreate("stop_play_on_exit", true, "Stop playing on exit", "Kill off player app, stopping playback, if user exits castclient.",false)
 SettingCreate("cache_media_time", "5d", "Max age of cached media", "Downloaded media files get deleted after this much time.",false)
 SettingCreate("feed_update_time", "5m", "Check for feed updates time", "Time interval to check all feeds for updates.",false)
