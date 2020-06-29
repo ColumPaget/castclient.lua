@@ -1,3 +1,45 @@
+# some webradio streams
+http://168.235.85.43:8000/Systrum-Channel1.m3u stream updated=0  
+http://168.235.85.43:8000/Systrum-Channel2.m3u stream updated=0  
+http://178.209.52.163:7331/maschinengeist.org.128.aacp stream updated=0  
+http://198.24.145.146:9690/listen.pls?sid=1 stream updated=0  
+http://198.24.145.146:9732/listen.pls?sid=1 stream updated=0  
+http://198.245.60.88:8128/listen.pls?sid=1 stream updated=0  
+http://83.240.65.107:8000/lloigor.m3u stream updated=0  
+http://dir.xiph.org/listen/845526/listen.xspf stream updated=0  
+http://liquiddoom.net:8000/lloigor stream updated=0  
+http://s3.viastreaming.net:8835/listen.pls stream updated=0  
+http://schizoid.in/schizoid-chill.pls stream updated=0  
+http://schizoid.in/schizoid-dub.pls stream updated=0  
+http://schizoid.in/schizoid-prog.pls stream updated=0  
+http://schizoid.in/schizoid-psy.pls stream updated=0  
+http://somafm.com/deepspaceone.pls stream updated=0  
+http://somafm.com/defcon.pls stream updated=0  
+http://somafm.com/digitalis.pls stream updated=0  
+http://somafm.com/dronezone.pls stream updated=0  
+http://somafm.com/dubstep.pls stream updated=0  
+http://somafm.com/groovesalad.pls stream updated=0  
+http://somafm.com/lush.pls stream updated=0  
+http://somafm.com/metaldetector.pls stream updated=0  
+http://somafm.com/missioncontrol.pls stream updated=0  
+http://somafm.com/secretagent.pls stream updated=0  
+http://somafm.com/spacestation.pls stream updated=0  
+http://somafm.com/suburbsofgoa.pls stream updated=0  
+http://somafm.com/thetrip.pls stream updated=0  
+http://streams.echoesofbluemars.org:8000/bluemars.m3u stream updated=0  
+http://streams.echoesofbluemars.org:8000/cryosleep.m3u stream updated=0  
+http://streams.echoesofbluemars.org:8000/voicesfromwithin.m3u stream updated=0  
+https://btxradio.mine.nu/classic/ stream updated=0  
+https://btxradio.mine.nu/dark/ stream updated=0  
+https://btxradio.mine.nu/prog/ stream updated=0  
+https://btxradio.mine.nu/techno/ stream updated=0  
+https://hirschmilch.de/chillout/listen.pls stream updated=0  
+https://hirschmilch.de/electronic/listen.pls stream updated=0  
+https://hirschmilch.de/prog-house/listen.pls stream updated=0  
+https://hirschmilch.de/progressive/listen.pls stream updated=0  
+https://hirschmilch.de/psytrance/listen.pls stream updated=0  
+
+#some RSS feeds
 http://feeds.spymuseum.org/spycast title=SPYCAST updated=1460453400
 http://feeds.soundcloud.com/users/soundcloud:users:93913472/sounds.rss title=Hackaday\ Podcast updated=1568989806
 http://www.groovelectric.com/groovelectric.xml title=GROOVELECTRIC:\ Downloadable\ Soul updated=1569049200

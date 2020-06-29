@@ -1,7 +1,7 @@
 SYNOPSIS
 ========
 
-castclient.lua is a primitive RSS Feed reader that can download and play podcasts and bitchute videos. It's written in lua and requires libUseful and libUseful-lua to be installed. It uses an external program to play downloaded media, and currently searches for mpg123, mpg321, ogg123, madplay, sox play, mplayer or cxine to use for this. All these playback programs can be paused by castclient.lua, as it sends them the 'SIGSTOP' and 'SIGCONT' signals. Most of them also have rewind and fast-forward functionality.
+castclient.lua is a primitive RSS Feed reader/webradio player that can download and play podcasts, bitchute videos and webradio streams. It's written in lua and requires libUseful and libUseful-lua to be installed. It uses an external program to play downloaded media, and currently searches for mpg123, mpg321, ogg123, madplay, sox play, mplayer or cxine to use for this. All these playback programs can be paused by castclient.lua, as it sends them the 'SIGSTOP' and 'SIGCONT' signals. Most of them also have rewind and fast-forward functionality.
 
 castclient.lua is not (yet) a podcatcher, and can thus only play items that are currently in an RSS feed file. It downloads them when the user requests to play them.
 
@@ -39,6 +39,7 @@ KEY BINDINGS
     a            Add a new feed
     c            Clear playlist (only available on playlist screen)
     s            Stop playback
+    u            Show urls rather than titles in feeds screen
     home         Restart playback from beginning
     end          Stop playback
     space        Pause current playback
