@@ -14,7 +14,6 @@ require("net")
 paths={}
 paths.casts_dir=process.getenv("HOME").."/.castclient/"
 paths.feeds_lst=paths.casts_dir.."/feeds.lst"
-paths.feeds_new=paths.casts_dir.."/feeds.new"
 paths.update_lck=paths.casts_dir.."/update.lck"
 paths.settings_conf=paths.casts_dir.."/settings.conf"
 
@@ -26,6 +25,12 @@ player_state_play=1
 player_state_pause=2
 player_state_stopped=3
 player_state=player_state_idle
+
+player=nil
+play_item=nil
+play_start=0
+play_index=-1
+
 
 feeds={}
 feeds_last_update=0
@@ -43,21 +48,54 @@ screen_refresh_needed=false
 
 downloads={}
 downloader_pid=0
-player_pid=0
-player=nil
 curr_chan=""
-play_item=nil
-play_start=0
-play_index=-1
 
 control_strings={}
 
-icecast={}
-icecast.pushsize=4096
+now_playing={}
+
+feeds_update_proc=nil
+
+--returns a file-extension type short name for a content type
+function ContentTypeToShortName(content_type)
+local extn=""
+
+if strutil.strlen(content_type) > 0
+then
+	if content_type=="audio/mp3" then extn="mp3"
+	elseif content_type=="audio/mp4" then extn="m4a"
+	elseif content_type=="audio/mpeg" then extn="mp3"
+	elseif content_type=="audio/ogg" then extn="ogg"
+	elseif content_type=="application/ogg" then extn="ogg"
+	elseif content_type=="audio/aac" then extn="aac"
+	elseif content_type=="audio/aacp" then extn="aac"
+	end
+end
+
+return extn
+end
 
 
 
-function IcecastReadMetadata()
+function MediaStreamOpen(items)
+local str, item
+
+if items==nil then return nil end
+for str,item in pairs(items)
+do
+	if item.url ~= nil
+	then
+	S=stream.STREAM(item.url, "r Icy-Metadata=1")
+	if S ~= nil then return S end
+	end
+end
+
+return nil
+end
+
+
+
+function IcecastReadMetadata(icecast)
 local toks, str, size, bytes, val
 local bytes_read=0
 
@@ -78,25 +116,23 @@ then
 	do
 		if string.sub(str, 1, 12) == "StreamTitle="
 		then
-			icecast.now_playing=strutil.stripQuotes(string.sub(str, 13))
+			str=strutil.stripQuotes(string.sub(str, 13))
+			Out:writeln("NowPlaying:"..icecast.stream_type..":"..str.."\n")
+			Out:flush()
 		end
 		str=toks:next()
 	end
 
-	if strutil.strlen(icecast.now_playing) > 0
-	then
-		toks=strutil.TOKENIZER(icecast.now_playing, " - ")
-		icecast.artist=toks:next()
-		icecast.track=toks:remaining()
-	end
 end
 
 end
 
 
-function IcecastCopyBytes()
-local val, result
+function IcecastCopyBytes(icecast)
+local val, player_s
+local result=0
 
+player_s=icecast.player:get_stream()
 if icecast.stream ~= nil
 then
 if icecast.bytes_read < icecast.blocksize 
@@ -106,57 +142,215 @@ then
 		val=icecast.blocksize - icecast.bytes_read
 		if val > icecast.pushsize then val=icecast.pushsize end
 		result=icecast.bytes:read(icecast.stream, val)
+		if result < 1 then return -1 end
 		if result > 0 then icecast.bytes_read=icecast.bytes_read + result end
 		icecast.bytes:write(player_s)
 	end
-else	
-	IcecastReadMetadata()
+		player_s:flush()
+else 	
+	if icecast.metadata==true then IcecastReadMetadata(icecast) end
+	Out:writeln("Cache: "..  player_s:out_queued() .. ":".. player_s:bufsize().."\n")
+	Out:flush()
+	process.collect()
 	icecast.bytes_read=0
 end
 end
 
+return result
 end
 
 
+function IcecastOpen(config_url)
+local S, str, url=nil, items, item
+
+S=stream.STREAM(config_url, "r Icy-Metadata=1")
+if S ~= nil
+then
+	ct=S:getvalue("HTTP:content-type")
+
+	if ct=="audio/aacp" then return(S) end
+	if ct=="audio/mpeg" then return(S) end
+	if ct=="application/ogg" then return(S) end
+	if ct=="audio/ogg" then return(S) end
+
+	if ct=="audio/x-scpls" then items=PLSPlaylistRead(S) end
+	if ct=="audio/x-mpegurl" then items=M3UPlaylistRead(S) end
+	if ct=="application/xspf+xml" then items=XSPFPlaylistRead(S) end
+	if ct=="application/xspf" then items=XSPFPlaylistRead(S) end
+
+	S:close()
+
+	if items ~= nil then return(MediaStreamOpen(items)) end
+end
+
+return nil
+end
+
+
+function IcecastPlayerInit(item)
+local player_info, player_s, S
+local icecast={}
+
+	S=IcecastOpen(item.url)
+	if S==nil then return nil end
+
+	Out=stream.STREAM("-")
+	icecast.stream=S
+	icecast.pushsize=1024
+	icecast.blocksize=tonumber(icecast.stream:getvalue("HTTP:icy-metaint"))
+	if icecast.blocksize ~= nil 
+	then
+		icecast.metadata=true
+	else
+		icecast.metadata=false
+		icecast.blocksize=4096 * 10
+	end
+
+	icecast.bytes=rawdata.RAWDATA("", icecast.blocksize)
+	icecast.bytes_read=0
+
+	icecast.content_type=icecast.stream:getvalue("HTTP:content-type")
+	icecast.stream_type=ContentTypeToShortName(icecast.content_type)
+
+	player_info=SelectPlayer(item.url, icecast.content_type) 
+	icecast.player=process.PROCESS( SetupPlayerCommand(player_info) .. " -", "noshell outnull")
+
+	if icecast.player ~= nil
+	then
+	player_s=icecast.player:get_stream()
+	player_s:timeout(0)
+	player_s:nonblock()
+	player_s:bufsize(strutil.fromMetric(settings.stream_cache_size.value))
+	player_s:fillto(player_s:bufsize(0) * tonumber(settings.stream_cache_fillto.value) / 100.0)
+	end
+
+	return icecast
+end
+
+function IcecastLaunchPlayer(item)
+local Data, proc
+local icecast={}
+
+proc=process.PROCESS("", "newpgroup")
+if proc==nil
+then
+	process.lu_set("HTTP:Debug", "N")
+
+	icecast=IcecastPlayerInit(item)
+	if icecast ~= nil
+	then
+		while IcecastCopyBytes(icecast) > -1
+		do
+		end
+	end
+	os.exit(0)
+else
+	return proc
+end
+
+end
+
+
+
+function PlayerReadMessage(S)
+local str, tok
+
+str=S:readln()
+if str ~= nil
+then
+	str=strutil.trim(str)
+	toks=strutil.TOKENIZER(str, ":| - ", "m")
+	--if string.sub(str, 1, 11)=="NowPlaying:" 
+	tok=toks:next()
+
+	if tok=="NowPlaying"
+	then 
+	now_playing.stream_type=toks:next()
+	now_playing.artist=toks:next()
+	now_playing.track=toks:remaining()
+	StatusBarDisplay()
+	elseif tok=="Cache"
+	then
+	now_playing.cache_full=tonumber(toks:next())
+	now_playing.cache_size=tonumber(toks:next())
+	now_playing.cache_percent=now_playing.cache_full * 100 / now_playing.cache_size
+	end
+end
+
+end
+
+
+
+function FeedsUpdateItem(str)
+local item
+
+item=FeedsParseItem(str)
+existing=feeds[item.url]
+if existing ~= nil
+then
+	if strutil.strlen(existing.title) == 0 or existing.title==existing.url then existing.title=item.title end
+	item.updated=item.updated
+else
+	feeds[item.url]=item
+end
+
+end
+
+
+
+function FeedsProcessReadMessage(S)
+local str
+
+str=S:readln()
+if str ~= nil
+then
+	FeedsUpdateItem(str)
+	FeedsSave(feeds)
+else
+	feeds_update_proc=nil
+end
+end
 
 
 -- does more than just get a keypress, this function handles any other streams that 
 -- may require servicing, but the main program loop doesn't know about that
 function GetKeypress()
-local poll, S, val, result, end_time
+local poll, S, result, end_time
 
 
 poll=stream.POLL_IO()
 poll:add(Out:get_stream())
+if player ~= nil 
+then 
+S=player:get_stream()
+if S ~= nil then poll:add(player:get_stream())  end
+end
+
+if feeds_update_proc ~= nil
+then
+poll:add(feeds_update_proc:get_stream())
+end
 
 if PlaylistProcess() then screen_refresh_needed=true end
-end_time=time.centisecs() + 100
+end_time=time.centisecs() + 30
 
 while time.centisecs() < end_time
 do
-
-if play_item ~= nil and play_item.type=="stream" and icecast.stream ~= nil
-then
-	--a flush to make some space in the output buffer
-	if player_s:out_space() > icecast.pushsize
+	S=poll:select(10)
+	if S ~= nil
 	then
-		poll:add(icecast.stream)
+		if S==Out:get_stream()
+		then 
+			screen_refresh_needed=true
+			return(Out:getc())
+		elseif player ~= nil and S==player:get_stream()
+		then
+			PlayerReadMessage(S)
+		elseif feeds_update_proc ~= nil and S==feeds_update_proc:get_stream()
+		then
+			FeedsProcessReadMessage(S)
+		end
 	end
-	player_s:write("",0)
-	IcecastCopyBytes()
-end
-
-
-S=poll:select(10)
-if S ~= nil
-then
-
-	if S==Out:get_stream()
-	then 
-		screen_refresh_needed=true
-		return(Out:getc())
-	end
-end
 end
 
 return(nil)
@@ -229,7 +423,7 @@ return(retstr)
 end
 
 
-function PlayItemSubstitueVars(str, item)
+function PlayItemSubstituteVars(str, item)
 local elapsed
 local vars={}
 
@@ -253,12 +447,13 @@ else
 	vars.percent="??"
 end
 
-if item.type == "stream" and player_s ~= nil
+if item.type == "stream"
 then
-	vars.now_playing=icecast.now_playing
-	vars.artist=icecast.artist
-	vars.track=icecast.track
-	vars.stream_cache=string.format("% 5.1f", player_s:out_queued() * 100 / player_s:bufsize())
+	vars.now_playing=now_playing.artist.." - "..now_playing.track
+	vars.artist=now_playing.artist
+	vars.track=now_playing.track
+	vars.stream_type=now_playing.stream_type
+	if now_playing.cache_percent ~= nil then vars.stream_cache=string.format("%03.1f", now_playing.cache_percent) end
 end
 
 vars.queue_curr=string.format("%d", play_index)
@@ -269,19 +464,34 @@ return (SubstituteVars(str, vars))
 end
 
 
+marquee=0
 
 function XtermTitle(item)
-local str, vars
+local str, vars, outstr, pos
 
-if strutil.strlen(settings.xterm_title.value) > 0
+str="~:music: castclient.lua"
+
+if strutil.strlen(settings.xterm_title.value) > 0 and strutil.strlen(now_playing.artist) > 0
 then
-str=SubstituteVars(str, vars)
-if strutil.strlen(title) > 0
+str=PlayItemSubstituteVars(settings.xterm_title.value, item) 
+end
+
+if strutil.strlen(str) > 0
 then
-  str=string.format("\x1b]2;%s\x07", title)
-  print(str)
+  outstr=string.format("\x1b]2;%s\x07", str)
+  Out:puts(outstr)
+end
+
+--[[
+	str=str .. "     "
+	pos=marquee % strutil.strlen(str)
+	marquee=marquee+1
+	outstr=string.sub(str, pos)..string.sub(str, 1, pos)
+  str=string.format("\x1b]3;WM_CLASS=%s\x07", outstr)
+  Out:puts(str)
 end
 end
+]]--
 
 end
 
@@ -322,7 +532,7 @@ end
 
 
 function PlaybackPause()
-if player_pid > 0
+if player ~= nil and player:pid() > 0
 then
 	if player_state==player_state_play
 	then
@@ -337,20 +547,16 @@ end
 end
 
 function PlaybackStop()
-if player_pid > 0
+if player ~= nil and player:pid() > 0
 then
 		player_state=state_stopped
 		player:continue()
 		process.usleep(10000)
-		player:stop()
+		player:stop_pgroup()
 end
 
-if icecast.stream ~= nil
-then
-	icecast.stream:close()
-	icecast.stream=nil
-	icecast.now_playing=""
-end
+now_playing.artist=""
+now_playing.track=""
 end
 
 
@@ -371,16 +577,7 @@ end
 function SelectPlayer(media_url, content_type)
 local player, extn, str, pos
 
-if strutil.strlen(content_type) > 0
-then
-	if content_type=="audio/mp3" then extn=".mp3"
-	elseif content_type=="audio/mpeg" then extn=".mp3"
-	elseif content_type=="audio/ogg" then extn=".ogg"
-	elseif content_type=="application/ogg" then extn=".ogg"
-	elseif content_type=="audio/aac" then extn=".aac"
-	elseif content_type=="audio/aacp" then extn=".aac"
-	end
-end
+extn=ContentTypeToShortName(content_type)
 
 if strutil.strlen(extn)==0
 then
@@ -391,9 +588,10 @@ then
 
 	str=filesys.basename(str)
 	extn=filesys.extn(str)
+	if strutil.strlen(extn) > 0 then extn=string.sub(extn, 2) end
 end
 
-if strutil.strlen(extn) > 1 then player=SelectPlayerGetFirstMatch(string.sub(extn, 2)) end
+if strutil.strlen(extn) > 0 then player=SelectPlayerGetFirstMatch(extn) end
 if player==nil then player=SelectPlayerGetFirstMatch("*") end
 
 return player
@@ -416,7 +614,7 @@ end
 
 -- setup the command line for a player program, substituting some values (like playback device) from settings
 function SetupPlayerCommand(player)
-local args, dev, toks, ao_type, ao_id
+local args, dev, toks, ao_type, ao_id, str
 
 args=player.args
 
@@ -428,7 +626,7 @@ if str ~= nil
 then
 toks=strutil.TOKENIZER(str, ":")
 ao_type=toks:next()
-ao_id=toks:next()
+ao_id=toks:remaining()
 
 args=string.gsub(args, "%(dev%)", str) 
 if ao_type ~= nil then args=string.gsub(args, "%(ao_type%)", ao_type) end
@@ -455,12 +653,12 @@ do
 	then
 	if string.sub(key, 1, 4) == "File" 
 	then 
-		val=string.sub(key,5)
+		val=tonumber(string.sub(key,5))
 		if items[val]==nil then items[val]={} end
 		items[val].url=toks:remaining()
 	elseif string.sub(key, 1, 5) == "Title" 
 	then
-		val=string.sub(key,6)
+		val=tonumber(string.sub(key,6))
 		if items[val]==nil then items[val]={} end
 		items[val].title=toks:remaining() 
 	end
@@ -538,78 +736,9 @@ end
 
 
 
-function MediaStreamOpen(items)
-local str, item
-
-if items==nil then return nil end
-for str,item in pairs(items)
-do
-	if item.url ~= nil
-	then
-	S=stream.STREAM(item.url, "r Icy-Metadata=1")
-	if S ~= nil then return S end
-	end
-end
-
-return nil
-end
-
-
-function IcecastOpen(config_url)
-local S, str, url=nil, items, item
-
-S=stream.STREAM(config_url, "r Icy-Metadata=1")
-if S ~= nil
-then
-	ct=S:getvalue("HTTP:content-type")
-	if ct=="audio/aacp" then return(S) end
-	if ct=="audio/mpeg" then return(S) end
-	if ct=="application/ogg" then return(S) end
-	if ct=="audio/ogg" then return(S) end
-
-	if ct=="audio/x-scpls" then return(MediaStreamOpen(PLSPlaylistRead(S))) end
-	if ct=="audio/x-mpegurl" then return(MediaStreamOpen(M3UPlaylistRead(S))) end
-	if ct=="application/xspf+xml" then return(MediaStreamOpen(XSPFPlaylistRead(S))) end
-	if ct=="application/xspf" then return(MediaStreamOpen(XSPFPlaylistRead(S))) end
-end
-
-return nil
-end
-
-
-
-function IcyStreamPlayer(item)
-local Data, S, player, player_info, val
-
-	--process.lu_set("HTTP:Debug", "Y")
-	icecast.stream=IcecastOpen(item.url)
-	if icecast.stream ~= nil
-	then
-	icecast.blocksize=tonumber(icecast.stream:getvalue("HTTP:icy-metaint"))
-	icecast.bytes=rawdata.RAWDATA("", icecast.blocksize)
-	icecast.bytes_read=0
-
-	player_info=SelectPlayer(item.url, icecast.stream:getvalue("HTTP:content-type")) 
-	player=process.PROCESS( SetupPlayerCommand(player_info) .. " -", "noshell outnull")
-
-	if player ~= nil
-	then
-	player_s=player:get_stream()
-	player_s:timeout(0)
-	player_s:nonblock()
-	player_s:bufsize(strutil.fromMetric(settings.stream_cache_size.value))
-	player_s:fillto(player_s:bufsize(0) * tonumber(settings.stream_cache_fillto.value) / 100.0)
-	end
-		
-	end
-
-	return(player)
-end
-
-
 
 function CachedFilePlayer(item)
-local player_info, cmd, str, player, media_path
+local player_info, proc, cmd, str, media_path
 
 media_path=CachePath(item.url)
 if filesys.exists(media_path) ~= true then media_path=item.url end
@@ -620,29 +749,30 @@ filesys.touch(media_path)
 player_info=SelectPlayer(item.url) 
 cmd=SetupPlayerCommand(player_info) .. " "..  media_path
 
-player=process.PROCESS(cmd, "pty noshell outnull")
+proc=process.PROCESS(cmd, "pty noshell outnull newpgroup")
 
-if player ~= nil
+if proc ~= nil
 then
 	--if a play command exists, then use it
-	str=LookupPlayerSetting(player:exec_path(), "play")
+	str=LookupPlayerSetting(proc:exec_path(), "play")
 	if str ~= nil 
 	then 
 		str=string.gsub(str, "%(url%)", media_path)
-		player:send(str) 
+		proc:send(str) 
 	end
 end
 
-return player
+return proc
 end
 
 
 
 function LaunchPlayerProcess(item)
+local player
 
 if item.type=="stream" and settings.handle_streams.value==true
 then 
-	player=IcyStreamPlayer(item) 
+	player=IcecastLaunchPlayer(item) 
 else
 	player=CachedFilePlayer(item) 
 end
@@ -653,17 +783,16 @@ end
 
 -- start playing a playlist item by looking up a player program that can play the file type and launching that
 function PlayItem(item)
+local pid
 
 PlaybackStop() 
 player=LaunchPlayerProcess(item)
-if player ~= nil
-then 
-	player_pid=player:pid()	
+if player ~= nil and player:pid() > 0
+then
 	player_state=player_state_play
-
 	play_item=item
 	play_start=time.secs()
-	item.pid=player_pid
+	item.pid=player:pid()
 	item.played=true
 	StatusBarDisplay()
 end
@@ -676,9 +805,9 @@ end
 function PlaybackPrev()
 local i, item, pos
 
-if player_pid > 0 
+if player ~= nil and player:pid() > 0 
 then 
-	item,pos=PlaybackGetCurrItem(downloads, player_pid)
+	item,pos=PlaybackGetCurrItem(downloads, player:pid())
 	--PlaybackStop() 
 end
 
@@ -699,9 +828,9 @@ end
 function PlaybackNext()
 local i, item
 
-if player_pid > 0 
+if player ~= nil and player:pid() > 0 
 then 
-	item=PlaybackGetCurrItem(downloads, player_pid)
+	item=PlaybackGetCurrItem(downloads, player:pid())
 	--PlaybackStop() 
 	if item ~= nil then item.played=true end
 end
@@ -722,9 +851,9 @@ end
 function PlaybackRestart()
 local i, item
 
-if player_pid > 0 
+if player ~= nil and player:pid() > 0 
 then 
-	item=PlaybackGetCurrItem(downloads, player_pid)
+	item=PlaybackGetCurrItem(downloads, player:pid())
 	--PlaybackStop() 
 	PlayItem(item) 
 end
@@ -738,7 +867,7 @@ end
 function PlaybackRewind()
 local cmd
 
-if player_pid > 0 
+if player ~= nil and player:pid() > 0 
 then 
 	cmd=LookupPlayerSetting(player:exec_path(), "rewind")
 	if cmd ~= nil then player:send(cmd) end
@@ -750,7 +879,7 @@ end
 function PlaybackForward()
 local cmd
 
-if player_pid > 0 
+if player ~= nil and player:pid() > 0 
 then 	
 	cmd=LookupPlayerSetting(player:exec_path(), "forward")
 	if cmd ~= nil then player:send(cmd) end
@@ -764,9 +893,12 @@ end
 function FindItemByURL(items, url)
 local i, item
 
-for i,item in ipairs(items)
-do
-	if item.url==url then return item,i end
+if items ~= nil
+then
+	for i,item in ipairs(items)
+	do
+		if item ~= nil and item.url==url then return item,i end
+	end
 end
 
 return nil
@@ -790,6 +922,20 @@ return str
 end
 
 
+function ContentTypeIsStream(content_type)
+
+if content_type=="audio/x-scpls" then return true end
+if content_type=="audio/x-mpegurl" then return true end
+if content_type=="application/xspf+xml" then return true end
+if content_type=="application/xspf" then return true end
+if content_type=="audio/aacp" then return true end
+if content_type=="audio/ogg" then return true end
+if content_type=="audio/mpeg" then return true end
+if content_type=="application/ogg" then return true end
+
+return false
+end
+
 function URLGetType(url)
 local S, ct, ftype="rss"
 
@@ -797,14 +943,7 @@ S=stream.STREAM(url)
 if S ~= nil
 then
 ct=S:getvalue("HTTP:content-type")
-if ct=="audio/x-scpls" then ftype="stream" end
-if ct=="audio/x-mpegurl" then ftype="stream" end
-if ct=="application/xspf+xml" then ftype="stream" end
-if ct=="application/xspf" then ftype="stream" end
-if ct=="audio/aacp" then ftype="stream" end
-if ct=="audio/ogg" then ftype="stream" end
-if ct=="audio/mpeg" then ftype="stream" end
-if ct=="application/ogg" then ftype="stream" end
+if ContentTypeIsStream(ct) == true then ftype="stream" end
 S:close()
 end
 
@@ -895,47 +1034,9 @@ now=time.secs()
 mtime=filesys.mtime(paths.feeds_lst)
 if (now - mtime ) > settings.feed_update_time.seconds then return true end
 
-if filesys.size(paths.feeds_new) > 0 then return true end
-
 return false
 end
 
-
--- if a feed has been added to the list of feeds it goes in a 'feeds.new' file. This is to prevent two processes trying to write to the feeds.lst file at the same time. In this scheme only the feeds update process edits the feeds.lst file, but it checks if a feeds.new file exists and imports it into the main feeds.lst file
-function FeedsImportNew(feeds_list)
-local FeedsS, NewFeedsS, str, chan, feed
-
-	NewFeedsS=stream.STREAM(paths.feeds_new, "rw")
-	if NewFeedsS ~= nil
-	then
-	NewFeedsS:waitlock()
-
-	str=NewFeedsS:readln()
-	while str ~= nil
-	do
-		feed=FeedsParseItem(str)
-
-		if feed.type ~= "stream" 
-		then
-			chan=FeedGet(feed.url)
-			if chan ~= nil 
-			then 
-			feed.type=chan.type
-			if strutil.strlen(feed.title)==0 then feed.title=chan.title end
-			feed.updated=chan.updated
-			else 
-			feed.type="stream"
-			end
-		end
-
-		feeds_list[feed.url]=feed 
-		str=NewFeedsS:readln()
-	end
-
-	NewFeedsS:truncate()
-	NewFeedsS:close()
-	end
-end
 
 
 
@@ -976,8 +1077,6 @@ then
 	S:close()
 end
 end
-
-if method=="new" then FeedsImportNew(feeds) end
 
 return feeds,true
 end
@@ -1108,8 +1207,30 @@ return chan,items
 end
 
 
-function PLSFeedRead(S)
-local str
+
+-- get a feed RSS file from cache, or download if cache is too old
+function FeedGet(iurl)
+local S, str, ct, toks, url, chan, items
+
+url=FeedFromCache(iurl)
+
+S=stream.STREAM(url, "r" .. " timeout=" .. settings.network_timeout.value)
+if S ~= nil
+then
+	chan,items=RSSFeedRead(S)
+	S:close()
+end
+
+return chan,items
+end
+
+
+
+
+--this function gets the playlist file for streams that use m3u, pls or other 
+--'playlist' files to describe the stream
+function StreamGetPlaylistDetails(S)
+local str, toks, ct, items
 local chan={}
 
 
@@ -1118,52 +1239,46 @@ chan.title=""
 chan.description=""
 chan.updated=0
 
-str=S:readln()
-while str ~= nil
-do
-	str=strutil.stripTrailingWhitespace(str)
-	if string.sub(str, 1, 7)=="Title1=" then chan.title=string.sub(str, 8) end
-	str=S:readln()
-end
+str=S:getvalue("HTTP:content-type")
+toks=strutil.TOKENIZER(str, ";")
+ct=toks:next()
 
+if ct=="audio/x-scpls" then items=PLSPlaylistRead(S) end
+if ct=="audio/x-mpegurl" then items=M3UPlaylistRead(S) end
+if ct=="application/xspf+xml" then items=XSPFPlaylistRead(S) end
+if ct=="application/xspf" then items=XSPFPlaylistRead(S) end
+
+if items ~= nil and items[1] ~= nil
+then
+	chan.title=items[1].title
+end
 
 return chan,nil
 end
 
 
 
--- get a feed RSS file from cache, or download if cache is too old
-function FeedGet(iurl)
-local S, str, ct, toks, url, chan, items
-
-url=FeedFromCache(iurl)
-
-S=stream.STREAM(url, "r")
-if S ~= nil
-then
-		chan,items=RSSFeedRead(S)
-end
-
-return chan,items
-end
-
-
 
 function StreamGet(url)
 local str, toks, ct, chan, items
 
-S=stream.STREAM(url)
+S=stream.STREAM(url, "r" .. " timeout=" .. settings.network_timeout.value)
 if S ~= nil
 then
 		str=S:getvalue("HTTP:content-type")
+		if str ~= nil
+		then
 		toks=strutil.TOKENIZER(str, ";")
 		ct=toks:next()
 
-		if ct=="audio/x-scpls" then chan,items=PLSFeedRead(S)
-		elseif ct=="audio/x-mpegurl" 
+		if ContentTypeIsStream(ct)
 		then
+			chan,items=StreamGetPlaylistDetails(S)
 		elseif ct=="text/xml" or ct=="application/xml" or ct=="application/rss+xml" then chan,items=RSSFeedRead(S)
 		end
+
+		end
+	S:close()
 end
 
 return chan,items
@@ -1171,7 +1286,7 @@ end
 
 
 
-function FeedItemSave(S, item)
+function FeedItemSend(S, item)
 local str
 
 str=string.format("%s %s updated=%d ", item.url, item.type,  item.updated)
@@ -1193,7 +1308,7 @@ then
 	S:waitlock()
 	for i,item in ipairs(feed_list) 
 	do
-	FeedItemSave(S, item)
+		FeedItemSend(S, item)
 	end
 
 	filesys.copy(paths.feeds_lst, paths.feeds_lst.."-")
@@ -1205,6 +1320,8 @@ end
 end
 
 
+
+
 --feeds are added to a feeds.new file to prevent two processes trying to write to feeds.lst file at the same time. The feeds update process will then pull in any items in feeds.new when it's free to do so
 function FeedsAdd(url, title)
 local S, str
@@ -1214,38 +1331,10 @@ item.type=""
 item.url=TranslateFeed(url)
 item.updated=0
 item.title=title
+feeds[item.url]=item
 
-filesys.mkdir(paths.casts_dir)
-
-S=stream.STREAM(paths.feeds_new, "a")
-if S ~= nil
-then
-	S:waitlock()
-	FeedItemSave(S, item)
-	S:close()
+FeedsSave(feeds)
 end
-
-screen_reload_needed=true
-end
-
-
-function FeedsImport(path)
-local existing_feeds, new_feeds
-
-existing_feeds=FeedsGetList(paths.feeds_lst, "by url")
-new_feeds=FeedsGetList(path)
-
-for i,item in ipairs(new_feeds)
-do
-	if existing_feeds[item.url]==nil
-	then 
-		print("added: "..item.url)
-		FeedsAdd(item.url)
-	end
-end
-
-end
-
 
 
 -- dialog that prompts the user to enter a feed url to be added to the feeds list
@@ -1263,8 +1352,9 @@ Out:puts("Press Escape twice to cancel adding feed\n\n")
 
 url=Out:prompt("~eEnter URL:~0 ")
 
-if strutil.strlen(url) > 0 then FeedsAdd(url) end
+if strutil.strlen(url) > 0 then FeedsUpdateItem(url) end
 
+FeedsSave(feeds)
 --clear output so next screen isn't messed up
 Out:clear()
 end
@@ -1275,7 +1365,9 @@ end
 -- it's job is to download and import feed urls to see if any new items have appeared
 function FeedsUpdateSubprocess()
 local feed_list, i, feed, chan, items, last_save
+local Out
 
+	Out=stream.STREAM("-", "rw")
 	feed_list=FeedsGetList(paths.feeds_lst, "new")
 	last_save=time.secs()
 
@@ -1283,27 +1375,34 @@ local feed_list, i, feed, chan, items, last_save
 	do
 		if strutil.strlen(feed.url) > 0 
 		then
+			if feed.type == "stream"
+			then
+				chan,items=StreamGet(feed.url)
+			else
+				chan,items=FeedGet(feed.url)
+			end
 
-		if feed.type == "stream"
-		then
-			chan,items=StreamGet(feed.url)
-		else
-			chan,items=FeedGet(feed.url)
+			if chan ~= nil
+			then
+				feed.type=chan.type
+	--			if strutil.strlen(feed.title) == 0 or feed.title == feed.url then feed.title=chan.title end
+				feed.description=chan.description
+				feed.updated=chan.updated
+				if items~=nil then feed.size=#items end
+			end
 		end
 
-		if chan ~= nil
-		then
-			feed.type=chan.type
-			feed.title=chan.title
-			feed.description=chan.description
-			feed.updated=chan.updated
-			if items~=nil then feed.size=#items end
+		-- collect any child processes
+		pid=process.collect()
+		while pid > 1
+		do
+		pid=process.collect()
 		end
+
+		FeedItemSend(Out, feed)
+		Out:flush()
 	end
 
-	end
-
-	FeedsSave(feed_list)
 	os.exit(1)
 end
 
@@ -1312,24 +1411,27 @@ end
 function FeedsUpdate()
 local lockfile
 
+
 lockfile=stream.STREAM(paths.update_lck, "w")
 if lockfile 
 then
 	if lockfile:lock()
 	then
-		feeds_update_pid=process.xfork("innull")
+		feeds_update_proc=process.PROCESS("", "newpgroup")
 
-		--if feeds_update_pid == 0 after a form, then we're in the child process
-			if feeds_update_pid == 0 
+		--if proc==nil after a form, then we're in the child process
+			if feeds_update_proc==nil
 			then 
 				lockfile:writeln(string.format("%d\n", process.getpid()))
-				FeedsUpdateSubprocess() 
+				FeedsUpdateSubprocess()
+				os.exit(0)
 			end
 
 	end
 	lockfile:close()
 end
 
+return proc
 end
 
 
@@ -1434,15 +1536,16 @@ end
 
 DownloadsCleanup(now)
 
-pid=process.childExited()
+pid=process.collect()
+
 if pid ~= 0
 then
 	retval=true
 	if pid==downloader_pid then downloader_pid=0 end
 	if pid==feeds_update_pid then feeds_update_pid=0 end
-	if pid==player_pid 
+	if player ~= nil and pid==player:pid() 
 	then 
-		player_pid=0 
+		player=nil
 		player_state=player_state_idle
 		play_item=nil
 		StatusBarDisplay()
@@ -1468,7 +1571,7 @@ then
 		end
 end
 
-if player_pid==0 then PlaybackNext() end
+if player == nil or player:pid()==0 then PlaybackNext() end
 
 return retval
 end
@@ -1497,7 +1600,7 @@ function NowPlayingItemNo()
 
 for i,item in ipairs(downloads)
 do
-	if item.pid == player_pid then return i end
+	if player ~= nil and item.pid == player:pid() then return i end
 end
 
 return 0
@@ -1533,6 +1636,9 @@ function HelpDisplay()
 
 	Out:puts("    ctrl-left    Skip to previous playlist item\n")
 	Out:puts("    ctrl-right   Skip to next playlist item\n")
+	
+	Out:puts("    u            toggle between names/titles and urls on feeds screen\n")
+	Out:puts("    n            change title/name of selected item on feeds screen\n")
 
 	Out:puts("\n")
 	Out:puts("~ePRESS ANY KEY TO CLOSE THIS SCREEN\n")
@@ -1554,13 +1660,14 @@ local str, item
 
 str="~C"
 str=str..string.format("Playlist: % 4d items     ", #downloads)
+
 if player_state==player_state_play and play_item ~= nil
 then
 	if play_item.type=="stream" 
 	then 
-		str=PlayItemSubstitueVars("~C~wSTREAM: cache: (stream_cache)% ~y~e(title)~m: (artist)~C~w: (track)", play_item)
+		str=PlayItemSubstituteVars("~C~w~eSTREAM: ~b(stream_type)~w cache: (stream_cache)% ~y~e(title)~m: (artist)~C~w: (track)", play_item)
 	else
-		str=PlayItemSubstitueVars("~C~wPLAYING: (queue_curr)/(queue_size) (percent) (elapsed)/(duration) (title)", play_item)
+		str=PlayItemSubstituteVars("~C~wPLAYING: (queue_curr)/(queue_size) (percent) (elapsed)/(duration) (title)", play_item)
 	end
 elseif player_state==player_state_pause
 then
@@ -1579,9 +1686,9 @@ if string.len(str) > Out:width() then str=string.sub(str, 1, Out:width()-1) end
 str=str.."~>~0"
 
 Out:move(0, Out:length()-1)
+XtermTitle(play_item)
 Out:puts(str)
 
-XtermTitle(item)
 
 end
 
@@ -1609,8 +1716,6 @@ end
 
 
 function ScreenRefresh(Screen)
-
-IcecastCopyBytes()
 
 DrawMenuSelection()
 
@@ -1799,34 +1904,6 @@ end
 end
 
 
-function FeedsScreenLoadPending(Screen)
-local NewFeedsS, str, added=false
-
-NewFeedsS=stream.STREAM(paths.feeds_new, "r")
-if NewFeedsS ~= nil
-then
-	str=NewFeedsS:readln()
-	while str ~= nil
-	do
-	str=strutil.stripTrailingWhitespace(str)
-	if Screen.items[str] == nil
-	then
-		feed={}
-		feed.title=""
-		feed.updated=0
-		feed.url=str
-		Screen.items[feed.url]=feed
-		Screen.menu:add(FeedOrStreamTitle(Screen, feed), feed.url)
-		added=true
-	end
-	str=NewFeedsS:readln()
-	end
-	NewFeedsS:close()
-end
-
-return added
-end
-
 
 
 
@@ -1848,10 +1925,6 @@ do
   end 
 end
 
-
---load pending items into screen.items directly because they are not
---updates of existing items
-if FeedsScreenLoadPending(Screen) then updated=true end
 
 screen_reload_needed=true
 if updated == true then Screen.menu:draw() end
@@ -1891,8 +1964,8 @@ str=Out:prompt("~eEnter New Name:~0 ")
 
 if strutil.strlen(str) > 0 
 then 
-feed.title=str
-FeedsAdd(feed.url, feed.title)
+	feed.title=str
+	FeedsSave(feeds)
 end
 
 --clear output so next screen isn't messed up
@@ -2020,7 +2093,7 @@ end
 function PlaylistFormatEntry(item)
 local str
 
-	if player_pid > 0 and player_pid==item.pid 
+	if player ~= nil and player:pid()==item.pid 
 	then 
 		str="~w~eplaying~0      "..item.title 
 	elseif downloader_pid > 0 and downloader_pid==item.pid
@@ -2415,11 +2488,16 @@ end
 
 function ApplicationInit()
 
-SettingCreate("players", "mp3:'mpg123 -C -o (ao_type) -a (ao_id)';mp3:'mpg321 -R -o (ao_type) -a (ao_id)';mp3:'madplay --tty-control';ogg:ogg123;aac,m4a:ffmpeg -f alsa default -i;aac:mplayer -ao (dev) -really-quiet -cache 1024 -demuxer aac;m3u,pls:'cxine -ao (dev) -ap goom -s 200x100 +ss -webcast';*:'cxine -ao (dev) +ss -webcast';*:'mplayer -ao (dev) -quiet -slave';mp3,ogg,flac,aac:'play -q --magic'", "Players", "List of media players to search for and use.", false)
+now_playing.artist=""
+now_playing.track=""
+
+--SettingCreate("players", "mp3:'mpg123 -C -o (ao_type) -a (ao_id)';mp3:'mpg321 -R -o (ao_type) -a (ao_id)';mp3:'madplay --tty-control';mp3:ogg:ogg123 -d (ao_type) ;aac,m4a:ffmpeg -f alsa default -i;aac:mplayer -ao (dev) -really-quiet -cache 1024 -demuxer aac;m3u,pls:'cxine -ao (dev) -ap goom -s 200x100 +ss -webcast';*:'cxine -ao (dev) +ss -webcast';*:'mplayer -ao (dev) -quiet -slave';mp3,ogg,flac,aac:'play -q --magic'", "Players", "List of media players to search for and use.", false)
+SettingCreate("players", "mp3:'mpg123 -C -o (ao_type) -a (ao_id)';mp3:'mpg321 -R -o (ao_type) -a (ao_id)';mp3:'madplay --tty-control';ogg:ogg123 -d (ao_type) ;mp3,aac,m4a,flac,opus:ffmpeg -f (ao_type) (ao_id)  -i;aac:mplayer -ao (dev) -really-quiet -cache 1024 -demuxer aac;m3u,pls:'cxine -ao (dev) -ap goom -s 200x100 +ss -webcast';*:'cxine -ao (dev) +ss -webcast';*:'mplayer -ao (dev) -quiet -slave';mp3,ogg,flac,aac:'play -q --magic'", "Players", "List of media players to search for and use.", false)
 
 SettingCreate("dev:mpg123", "oss:/dev/dsp", "mpg123 output device", "Audio output device for mpg123. This will be /dev/dsp, /dev/dsp1 for oss, or hw:0, hw:1 for alsa.",false)
 SettingCreate("dev:mpg321", "oss:/dev/dsp", "mpg321 output device", "Audio output device for mpg321. This will be /dev/dsp, /dev/dsp1 for oss, or hw:0, hw:1 for alsa.",false)
 SettingCreate("dev:mplayer", "alsa:hw:1,alsa:hw:0,oss:/:dev/:dsp1,oss:/dev/dsp", "mplayer output device", "Audio output device for mplayer. Mplayer can accept a list of devices and use the first one that works. Format is <dev type>:<dev name>. e.g. oss:/dev/dsp or alsa:hw:1",false)
+SettingCreate("dev:ffmpeg", "alsa:default", "ffmpeg output device", "Audio output device for ffmpeg. Format is <dev type>:<dev name>. e.g. oss:/dev/dsp or alsa:hw:1",false)
 SettingCreate("dev:cxine", "alsa:0,alsa:1", "cxine output device", "Audio output device for cxine. CXine can accept a list of devices and use the first one that works. Format is <dev type>:<dev number>. e.g. oss:0 or alsa:1",false)
 SettingCreate("exit_key", "Q", "Exit Key", "Key that exits application. Most keys are just indicated by their letter, uppercase for 'shift-key'. e.g. 'a' for the a key, 'A' for shift-a key. Some keys have names: 'ESC' for escape, HOME, INSERT, DELETE, WIN, MENU, F1, F2, F3...", false)
 SettingCreate("stop_play_on_exit", true, "Stop playing on exit", "Kill off player app, stopping playback, if user exits castclient.",false)
@@ -2432,7 +2510,8 @@ SettingCreate("handle_streams", false, "Handle streams internally", "Handle stre
 SettingCreate("stream_cache_size", "500k", "Cache Size for Streams", "Size of cache/buffer to use for streaming",false)
 SettingCreate("stream_cache_fillto", "30", "Cache Fill Percent", "Fill cache to this percent before start playing",false)
 
-SettingCreate("xterm_title", "", "Xterm Title", "If this value is non-blank then set title bar using Xterm escape sequences. Variables can be included in brackets, like: 'playing: (file)'", false)
+SettingCreate("network_timeout", "500", "net timeout centisecs", "centisecs to wait for connection or read", false)
+SettingCreate("xterm_title", "(artist): (track)", "Xterm Title", "If this value is non-blank then set title bar using Xterm escape sequences. Variables can be included in brackets, like: 'playing: (file)'", false)
 
 SettingCreate("forward:mpg123", "..", "Forward cmd for mpg123", "send to mpg123 to fast-forward", true)
 SettingCreate("rewind:mpg123", ",,", "Rewind cmd for mpg123", "send to mpg123 to rewind", true)
@@ -2483,11 +2562,20 @@ return cmd, url
 end
 
 
+function StartupConnectivityCheck()
+local S
+
+S=stream.STREAM("http://www.google.com/");
+S:close();
+end
+
+
 
 -- MAIN STARTS HERE
 ApplicationInit()
 cmd,url=ParseCommandLine(arg)
 SettingsLoad()
+
 
 
 if cmd=="add" 
@@ -2499,18 +2587,22 @@ then
 else
 	process.lu_set("Error:Silent","y")
 	process.sigwatch(13)
+	process.setenv("PATH", "/usr/bin:/bin")
+
 	if strutil.strlen(settings.proxy.value) then net.setProxy(settings.proxy.value) end
+
+	StartupConnectivityCheck()
 
 	FeedsUpdate()
 	Out=terminal.TERM()
-	terminal.utf8(0)
-	Out:timeout(100)
+	terminal.utf8(2)
+	Out:timeout(30)
 	Out:move(0,0)
 	Out:clear()
 
 	InteractiveModeMainLoop()
 
-	if player_pid > 0 and settings.stop_play_on_exit.value == true then player:stop() end
+	if player ~=nil and player:pid() > 0 and settings.stop_play_on_exit.value == true then player:stop_pgroup() end
 
 	Out:move(0,0)
 	Out:clear()
